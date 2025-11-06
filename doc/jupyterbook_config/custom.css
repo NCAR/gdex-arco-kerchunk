@@ -1,0 +1,44 @@
+/* 1) Enlarge the logo image. The theme applies `h-9` directly to <img>. */
+nav a img.h-9 {
+  height: 120px !important;         /* adjust to taste */
+  width: auto !important;
+}
+
+/* 2) Give the header bar enough room (the theme sets h-[60px] on the sticky header) */
+body > div.sticky.top-0 {
+  height: 140px !important;         /* slightly taller than the logo */
+}
+
+/* 3) Vertically center things after the taller header (optional nicety) */
+body > div.sticky.top-0 nav {
+  align-items: center !important;
+}
+/* 0) Single source of truth for the header height */
+:root { --header-h: 120px; }   /* set this to your desired logo/header size */
+
+/* 1) Make the top sticky header match the variable */
+body > div.sticky.top-0 {
+  height: var(--header-h) !important;
+  min-height: var(--header-h) !important;
+  overflow: visible !important;
+}
+
+/* 2) Ensure in-page anchor links don't hide under the taller header */
+html { scroll-padding-top: var(--header-h) !important; }
+
+/* 3) Move fixed/sticky side panels down to clear the taller header */
+/* Left ToC container (note the escaped colon in the class) */
+div.fixed.xl\:article-grid { top: var(--header-h) !important; }
+
+/* Right sticky block that had inline style top:60px */
+.lg\:sticky { top: var(--header-h) !important; }
+
+/* 4) (If needed) keep nav contents centered vertically */
+body > div.sticky.top-0 nav { align-items: center !important; }
+
+/* 5) Your logo size rule (keep whatever you settled on) */
+nav a img.h-9 {
+  height: calc(var(--header-h) - 20px) !important; /* a little smaller than bar */
+  width: auto !important;
+  max-height: none !important;
+}
