@@ -1,9 +1,13 @@
 #!/usr/bin/env python
+"""
+Read a local Kerchunk reference file and print the dataset contents.
+
+
+"""
+
 import fsspec
 import sys
 import xarray
-import dask
-import datetime
 
 
 def read_local_ref(filename, *args):
