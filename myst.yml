@@ -1,0 +1,33 @@
+# See docs at: https://mystmd.org/guide/frontmatter
+version: 1
+project:
+  # jupyter book metadata and configuration
+  id: d31750a3-977c-49da-9a41-5aac3b3c5f4f
+  title: GDEX ARCO Ready Kerchunk Documentation
+  description: >
+    Documentation for creating the GDEX ARCO Ready Kerchunk reference file, a collection of
+    use cases and data pipeline scripts.
+  keywords: ["jupyterbook2","GDEX","Kerchunk","ARCO Ready"]
+  authors: 
+   - name: Riley Conroy
+     github: rpconroy
+   - name: Chia-Wei Hsu
+     github: chiaweh2
+  github: https://github.com/NCAR/gdex-arco-kerchunk
+
+  # To autogenerate a Table of Contents, run "jupyter book init --write-toc"
+  toc:
+    - file: doc/introduction.md
+    - title: Getting Started
+      children:
+        - file: README.md
+    - title: Kerchunk Reference Creation Examples
+      children:
+        - file: examples/README.md
+    
+site:
+  template: book-theme
+  options:
+    favicon: doc/jupyterbook_config/favicon-96x96.png
+    logo: doc/jupyterbook_config/gdex_logo.png
+    style: doc/jupyterbook_config/custom.css

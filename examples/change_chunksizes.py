@@ -1,6 +1,12 @@
 #!/usr/bin/env python
+"""
+Change chunk sizes of specified variables in a NetCDF file and save to a new file.
+"""
+
 import sys
 import xarray
+
+
 if len(sys.argv) < 3:
     print(f'Usage: ./{sys.argv[0]} [filename] [output filename] [var1] [var2] ...')
     exit(1)
