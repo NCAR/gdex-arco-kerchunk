@@ -61,7 +61,7 @@ def main_parquet(dict_reference, outfile):
     """ Convert local file path to remote https file path in reference dictionary
     There are two remote paths:
     1. https://data.gdex.ucar.edu
-    2. https://osdf-director.osg-htc.org/ncar/gdex
+    2. osdf:///ncar/gdex
 
     The remote reference files will be saved as:
     1. [outfile]-https.parquet
