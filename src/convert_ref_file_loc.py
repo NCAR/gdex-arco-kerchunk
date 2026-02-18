@@ -40,8 +40,8 @@ def main(filename, outfile):
             replacement = 'https:\\/\\/data.gdex.ucar.edu'
             # replacement_osdf = 'https:\\/\\/osdf-director.osg-htc.org\\/ncar\\/gdex'
             # replacement_osdf = 'osdf:\\/\\/\\/ncar\\/gdex'
-            # replacement_osdf = 'osdf:///ncar/gdex'
-            replacement_osdf = 'pelican://osg-htc.org/ncar/gdex'
+            replacement_osdf = 'osdf:///ncar/gdex'
+            # replacement_osdf = 'pelican://osg-htc.org/ncar/gdex'
             # Note : old RDA path
             # match = '\\/gpfs\\/csfs1\\/collections\\/rda\\/data'
             # replacement = 'https:\\/\\/data.rda.ucar.edu'
