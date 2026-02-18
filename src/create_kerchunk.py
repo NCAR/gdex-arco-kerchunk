@@ -23,6 +23,7 @@ Test command:
 # from pathlib import Path
 
 import os, sys
+import psutil
 import ujson
 import argparse
 import re
@@ -547,6 +548,9 @@ def process_kerchunk_combine(
     if variables is None:
         variables = []
 
+    # monitor memory usage on the client process (large aggregations can cause memory issues)
+    process = psutil.Process(os.getpid())
+
     # check if data directory exists
     try:
         os.stat(directory)
@@ -573,6 +577,7 @@ def process_kerchunk_combine(
         sys.exit(1)
 
     all_refs = []
+    print('generating references with dask delayed (dask jobqueue to compute node)')
     for f in files:
         lazy_result = dask.delayed(gen_reference)(f, output_format=output_format, write_reference=False)
         lazy_results.append(lazy_result)
@@ -588,6 +593,12 @@ def process_kerchunk_combine(
 
     all_refs.extend(dask.compute(*lazy_results))
 
+    # After compute(), data is in client process memory (not on workers anymore)]
+    print('dask computed (all data in client memory)')
+    memory_gb = process.memory_info().rss / 1e9
+    print(f'Client process memory usage (GB): {memory_gb:.2f}')
+    print('Total memory used for references (GB): ', sum([sys.getsizeof(r)/1e9 for r in all_refs]))
+
     # if len(variables) == 1 and variables[0] == ALL_VARIABLES_KEYWORD:
     #     separate_combine_write_all_vars(all_refs, variables, make_remote)
     #     sys.exit(1)
@@ -600,8 +611,11 @@ def process_kerchunk_combine(
            concat_dims=[time_varname],
            #coo_map='QSNOW',
         )
+    
+    print('create aggregated reference')
     multi_kerchunk = mzz.translate()
 
+    print('writing combined kerchunk reference')
     write_combined_kerchunk(
         output_directory,
         multi_kerchunk,
