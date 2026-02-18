@@ -39,7 +39,9 @@ def main(filename, outfile):
             match = '\\/glade\\/campaign\\/collections\\/gdex\\/data'
             replacement = 'https:\\/\\/data.gdex.ucar.edu'
             # replacement_osdf = 'https:\\/\\/osdf-director.osg-htc.org\\/ncar\\/gdex'
-            replacement_osdf = 'osdf:\\/\\/\\/ncar\\/gdex'
+            # replacement_osdf = 'osdf:\\/\\/\\/ncar\\/gdex'
+            # replacement_osdf = 'osdf:///ncar/gdex'
+            replacement_osdf = 'pelican://osg-htc.org/ncar/gdex'
             # Note : old RDA path
             # match = '\\/gpfs\\/csfs1\\/collections\\/rda\\/data'
             # replacement = 'https:\\/\\/data.rda.ucar.edu'
@@ -81,7 +83,9 @@ def main_parquet(dict_reference, outfile):
     match = '/glade/campaign/collections/gdex/data'
     replacement = 'https://data.gdex.ucar.edu'
     # replacement_osdf = 'https://osdf-director.osg-htc.org/ncar/gdex'
-    replacement_osdf = 'osdf:\\/\\/\\/ncar\\/gdex'
+    replacement_osdf = 'pelican://osg-htc.org/ncar/gdex'
+    # replacement_osdf = 'osdf:///ncar/gdex'
+    # replacement_osdf = 'osdf:\\/\\/\\/ncar\\/gdex'
 
     # hard copy the dict_reference to modify
     dict_reference_https = copy.deepcopy(dict_reference)
