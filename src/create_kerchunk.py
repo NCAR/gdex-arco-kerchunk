@@ -14,8 +14,9 @@ Test command:
     python create_kerchunk.py --action sidecar --directory /path/to/data --output_directory /path/to/output
     python create_kerchunk.py --action combine --directory /gdex/data/d640000/bnd_ocean/194907 --output_directory /glade/u/home/chiaweih/Kerchunk_experiments/test_json --extensions nc --filename combined_kerchunk.json --dry_run
     python create_kerchunk.py --action combine --directory /gdex/data/d640000/bnd_ocean/194907 --output_directory /glade/u/home/chiaweih/Kerchunk_experiments/test_json --extensions nc --filename combined_kerchunk.json 
-    python create_kerchunk.py --action combine --directory /glade/campaign/collections/gdex/data/d640000/bnd_ocean/194907 --output_directory /glade/u/home/chiaweih/Kerchunk_experiments/test_json --extensions nc --filename bnd_ocean.194907.parq --output_format parquet --make_remote
-    
+    python create_kerchunk.py --action combine --directory /glade/campaign/collections/gdex/data/d640000/anl_surf125/194907 --output_directory /glade/u/home/chiaweih/Kerchunk_experiments/test_json --extensions nc --filename anl_surf125.194907.parq --output_format parquet --make_remote
+    python create_kerchunk.py --action combine --directory /glade/campaign/collections/gdex/data/d640000/anl_surf125/194907 --output_directory /lustre/desc1/scratch/chiaweih/d640000.jra3q/kerchunk_osdf_fix/osdf_protocol --extensions nc --filename anl_surf125.194907.json --output_format json --make_remote
+    --action combine --directory /glade/campaign/collections/gdex/data/d651030/BHIST/b.e13.BHISTC5.ne30_g16.cesm-ihesp-hires1.0.42-1920-2005.009/ocn/proc/tseries/month_1 --output_directory /lustre/desc1/scratch/chiaweih/d651030.mesaclip_lowres/kerchunk --extensions nc --filename b.e13.BHISTC5.ne30_g16.cesm-ihesp-hires1.0.42-1920-2005.009.ocn.month_1.parq --output_format parquet --cluster PBS --make_remote  --chunk_overrides moc_components:3,256,1 transport_components:5,256,1  transport_regions:2,256,1
 """
 
 # import codecs
@@ -23,6 +24,7 @@ Test command:
 # from pathlib import Path
 
 import os, sys
+import json
 import ujson
 import argparse
 import re
@@ -119,6 +121,18 @@ def _get_parser():
         default=[]
     )
     parser.add_argument(
+        '--drop_variables', '-dv',
+        type=str,
+        required=False,
+        nargs='+',
+        metavar='<variable names>',
+        help=(
+        "Drop specific variables.\n"+
+        "Variable names are case sensitive."
+        ),
+        default=[]
+    )
+    parser.add_argument(
         '--cluster', '-c',
         type=str,
         default="local",
@@ -169,12 +183,39 @@ def _get_parser():
         help='Specify the output format for the combined references.'
     )
 
+    parser.add_argument(
+        '--chunk_overrides', '-co',
+        type=str,
+        required=False,
+        nargs='+',
+        metavar='<variable:chunks>',
+        help=(
+            'Override chunk sizes for specific variables in the format: variable_name:dim1,dim2,dim3\n'
+            'Example: --chunk_overrides temperature:1,100,200 pressure:1,50,50\n'
+            'This modifies the Kerchunk reference without changing the original HDF5 file.'
+        ),
+        default=[]
+    )
+
+    parser.add_argument(
+        '--combine_memory', '-cm',
+        type=str,
+        required=False,
+        metavar='<memory>',
+        help=(
+            'Memory allocation for the combine step (e.g., "128GB", "256GB").\n'
+            'After parallel reference generation, restarts Dask with 1 high-memory worker.\n'
+            'Only applies when using PBS cluster. Default: uses existing cluster.'
+        ),
+        default=None
+    )
+
     return parser
 
 
 def get_cluster(
     cluster_setting,
-    num_processes=5,
+    num_processes=4,
     local_directory_pbs: str = None,
     log_directory_pbs: str = None
 ):
@@ -199,12 +240,12 @@ def get_cluster(
             cluster = PBSCluster(
                 job_name = 'gdex-kerchunk-hpc',
                 cores = 1,
-                memory = '4GiB',
+                memory = '10GiB',
                 processes = 1,
                 account = 'P43713000',
                 local_directory = local_directory_pbs,
                 log_directory = log_directory_pbs,
-                resource_spec = 'select=1:ncpus=1:mem=4GB',
+                resource_spec = 'select=1:ncpus=1:mem=10GB',
                 queue = 'gdex',
                 walltime = '24:00:00',
                 interface = 'ext'
@@ -237,7 +278,124 @@ def cleanup_dask_client():
         _global_client = None
 
 
-def gen_reference(file_url, output_format='json', write_reference=False):
+def restart_client_for_combine(
+    memory='128GB',
+    local_directory_pbs: str = None,
+    log_directory_pbs: str = None
+):
+    """Restart Dask client with single high-memory worker for combine operation.
+    
+    Args:
+        memory (str): Memory allocation (e.g., '128GB', '256GB')
+        local_directory_pbs (str): Local directory for PBS
+        log_directory_pbs (str): Log directory for PBS
+    """
+    global _global_client
+    
+    # Close existing client
+    if _global_client is not None:
+        print(f'Closing existing Dask client')
+        _global_client.close()
+        _global_client = None
+    
+    # Create new high-memory cluster
+    print(f'Creating new Dask client with 1 worker, {memory} memory for combine operation')
+    cluster = PBSCluster(
+        job_name = 'gdex-kerchunk-combine',
+        cores = 1,
+        memory = memory,
+        processes = 1,
+        account = 'P43713000',
+        local_directory = local_directory_pbs,
+        log_directory = log_directory_pbs,
+        resource_spec = f'select=1:ncpus=1:mem={memory}',
+        queue = 'gdex',
+        walltime = '24:00:00',
+        interface = 'ext'
+    )
+    cluster.scale(jobs=1)  # Only 1 worker needed
+    _global_client = cluster.get_client()
+    print(f'New client ready')
+
+
+def override_chunks(reference_struct, chunk_overrides):
+    """Override chunk information in a Kerchunk reference structure.
+    
+    This modifies the .zarray metadata for specified variables to use different
+    chunk sizes without modifying the original HDF5 file.
+    
+    Parameters
+    ----------
+    reference_struct : dict
+        The Kerchunk reference structure (from h5chunks.translate())
+    chunk_overrides : dict
+        Dictionary mapping variable names to desired chunk tuples
+        Example: {'temperature': (1, 100, 200), 'pressure': (1, 50, 50)}
+        
+    Returns
+    -------
+    reference_struct : dict
+        Modified reference structure with updated chunk information
+        
+    Examples
+    --------
+    >>> refs = h5chunks.translate()
+    >>> refs = override_chunks(refs, {'temp': (1, 256, 256)})
+    """
+
+    for var_name, new_chunks in chunk_overrides.items():
+        # Look for the .zarray metadata entry for this variable
+        zarray_key = f"{var_name}/.zarray"
+        if zarray_key in reference_struct['refs']:
+            # Parse the .zarray JSON string
+            zarray_data = json.loads(reference_struct['refs'][zarray_key])
+
+            # Update the chunks field
+            old_chunks = zarray_data.get('chunks', 'unknown')
+            zarray_data['chunks'] = list(new_chunks)
+
+            # Write back the modified .zarray
+            reference_struct['refs'][zarray_key] = json.dumps(zarray_data)
+
+            print(f"Updated chunks for '{var_name}': {old_chunks} -> {new_chunks}")
+        else:
+            print(f"Warning: Variable '{var_name}' not found in reference structure")
+
+    return reference_struct
+
+
+def parse_chunk_overrides(chunk_override_args):
+    """Parse chunk override arguments from command line.
+    
+    Parameters
+    ----------
+    chunk_override_args : list of str
+        List of strings in format 'variable:dim1,dim2,dim3'
+        Example: ['temperature:1,100,200', 'pressure:1,50,50']
+        
+    Returns
+    -------
+    chunk_dict : dict
+        Dictionary mapping variable names to chunk tuples
+        Example: {'temperature': (1, 100, 200), 'pressure': (1, 50, 50)}
+    """
+    chunk_dict = {}
+    
+    for arg in chunk_override_args:
+        try:
+            # print(f"Parsing chunk override argument: {arg}")
+            var_name, chunks_str = arg.split(':', 1)
+            # print(f"Argument details: variable={var_name}, chunks={chunks_str}")
+            chunks = tuple(int(x.strip()) for x in chunks_str.split(','))
+            chunk_dict[var_name.strip()] = chunks
+        except ValueError as e:
+            print(f"Warning: Could not parse chunk override '{arg}': {e}")
+            print(f"Expected format: variable_name:dim1,dim2,dim3")
+    
+    return chunk_dict
+
+
+def gen_reference(file_url, output_format='json', write_reference=False, chunk_overrides=None):
     """Generate kerchunk json structure for a single file.
     
     Parameters
@@ -247,16 +405,18 @@ def gen_reference(file_url, output_format='json', write_reference=False):
     output_format : str
         output format for the generated kerchunk structure.
         Default is 'json'. If 'parquet' is specified, the output will be in parquet format.
- 
-    
-    write_json : bool
+    write_reference : bool
         whether to write the json structure to a sidecar file.
         Default is False and returns the json structure without writing to file.
         This is useful for dask delayed processing of multiple files combined later.
+    chunk_overrides : dict, optional
+        Dictionary mapping variable names to desired chunk tuples to override
+        incorrect chunk information in the original file.
+        Example: {'temperature': (1, 100, 200), 'pressure': (1, 50, 50)}
 
     Returns
     --------
-    json_struct : dict
+    reference_struct : dict
         kerchunk json structure
 
     Notes
@@ -301,16 +461,20 @@ def gen_reference(file_url, output_format='json', write_reference=False):
             error='ignore'
         )
         # year = file_url.split('/')[-1].split('.')[0]
+        reference_struct = h5chunks.translate()
+        
+        # Override chunk information if provided
+        if chunk_overrides:
+            reference_struct = override_chunks(reference_struct, chunk_overrides)
+        
         if write_reference and output_format.lower() == 'json':
             with fs.open(outfile, 'wb') as f:
                 print(f'writing {outfile}')
-                f.write(ujson.dumps(h5chunks.translate()).encode())
+                f.write(ujson.dumps(reference_struct).encode())
         elif write_reference and output_format.lower() == 'parquet':
             from kerchunk import df
             print(f'writing {outfile}')
-            df.refs_to_dataframe(h5chunks.translate(), outfile)
-
-        reference_struct = h5chunks.translate()
+            df.refs_to_dataframe(reference_struct, outfile)
 
     return reference_struct
 
@@ -332,7 +496,7 @@ def matches_extension(filename, extensions):
             return True
     return False
 
-def process_kerchunk_sidecar(directory, output_directory='.', output_format='json', extensions=None, dry_run=False):
+def process_kerchunk_sidecar(directory, output_directory='.', output_format='json', extensions=None, dry_run=False, chunk_overrides=None):
     """Traverse files in `directory` and create kerchunk sidecar files."""
 
     if extensions is None:
@@ -371,7 +535,7 @@ def process_kerchunk_sidecar(directory, output_directory='.', output_format='jso
                 print(f)
                 # create json reference sidecar file
                 if not dry_run:
-                    gen_reference(os.path.join(cur_dir,f), output_format=output_format, write_reference=True)
+                    gen_reference(os.path.join(cur_dir,f), output_format=output_format, write_reference=True, chunk_overrides=chunk_overrides)
 
         if len(child_dirs) == 0:
             # if get to the end of the branch, go back up one level
@@ -461,6 +625,25 @@ def separate_vars(refs, var_names):
         updated_refs.append(ref)
     return updated_refs
 
+def drop_vars(refs, var_names):
+    """Drops specific variables from reference files object."""
+
+    # update keep variables with user specified variables in var_names
+    drop_values = set(var_names)
+
+    # process each reference file object
+    # only keep variables not in drop_values
+    updated_refs = []
+    for ref in refs:
+        new_json = {}
+        for i in ref['refs']:
+            varname = i.split('/')[0]
+            if varname not in drop_values:
+                new_json[i] = ref['refs'][i]
+        ref['refs'] = new_json
+        updated_refs.append(ref)
+    return updated_refs
+
 # def separate_combine_write_all_vars(refs, var_names, make_remote=False):
 #     """Extracts specific variables from refs.
 #     """
@@ -535,11 +718,25 @@ def process_kerchunk_combine(
     regex=None,
     dry_run=False,
     variables=None,
+    drop_variables=None,
     output_filename="",
     make_remote=False,
-    output_format="json"
+    output_format="json",
+    chunk_overrides=None,
+    combine_memory=None,
+    cluster_type='local'
 ):
-    """Traverse files in `directory` and create kerchunk aggregated files."""
+    """Traverse files in `directory` and create kerchunk aggregated files.
+    
+    Parameters
+    ----------
+    combine_memory : str, optional
+        If specified and cluster_type is 'pbs', restarts Dask client with
+        1 high-memory worker after reference generation completes.
+        Example: '128GB', '256GB'
+    cluster_type : str
+        Type of cluster being used ('pbs', 'local', etc.)
+    """
 
     # set default arguments
     if extensions is None:
@@ -572,9 +769,13 @@ def process_kerchunk_combine(
         print(f'{len(files)} files to process')
         sys.exit(1)
 
+    # monitor memory usage on the client process
+    import psutil
+    process = psutil.Process(os.getpid())
+
     all_refs = []
     for f in files:
-        lazy_result = dask.delayed(gen_reference)(f, output_format=output_format, write_reference=False)
+        lazy_result = dask.delayed(gen_reference)(f, output_format=output_format, write_reference=False, chunk_overrides=chunk_overrides)
         lazy_results.append(lazy_result)
         # Split up large jobs
         if len(lazy_results) > 5000:
@@ -586,7 +787,33 @@ def process_kerchunk_combine(
             end = time.time()
             print(f'Done intermediate. Elapsed time ({end-start} seconds)')
 
+            # print memory used on client process
+            memory_gb = process.memory_info().rss / 1e9
+            print(f'Client process memory usage (GB): {memory_gb:.2f}')
+                
+            # Get actual memory usage from Dask cluster
+            if _global_client is not None:
+                worker_info = _global_client.scheduler_info()['workers']
+                total_memory_used = sum(w['metrics']['memory'] for w in worker_info.values())
+                print(f'Total memory used by Dask workers (GB): {total_memory_used / 1e9:.2f}')
+                print('Total memory used for references (GB): ', sum([sys.getsizeof(r)/1e9 for r in all_refs]))
+
     all_refs.extend(dask.compute(*lazy_results))
+
+    # print total number of references generated
+    print(f'Reference generation complete. Total references: {len(all_refs)}')
+    
+    # After compute(), data is in client process memory (not on workers anymore)
+    memory_gb = process.memory_info().rss / 1e9
+    print(f'Client process memory usage (GB): {memory_gb:.2f}')
+    
+    # Restart client with high memory for combine operation if specified
+    # if combine_memory and cluster_type.lower() == 'pbs':
+    #     restart_client_for_combine(
+    #         memory=combine_memory,
+    #         local_directory_pbs=PBS_LOCAL_DIR,
+    #         log_directory_pbs=PBS_LOG_DIR
+    #     )
 
     # if len(variables) == 1 and variables[0] == ALL_VARIABLES_KEYWORD:
     #     separate_combine_write_all_vars(all_refs, variables, make_remote)
@@ -594,14 +821,26 @@ def process_kerchunk_combine(
     if len(variables) > 0:
         all_refs = separate_vars(all_refs, variables)
 
+    if len(drop_variables) > 0:
+        all_refs = drop_vars(all_refs, drop_variables)
+
     print('combining')
+    
     mzz = MultiZarrToZarr(
            all_refs,
            concat_dims=[time_varname],
            #coo_map='QSNOW',
         )
+    print('Total memory used for combined references (GB): ', sys.getsizeof(mzz)/1e9)
+
+    print('create aggregation')
+    # Submit the translate operation to the worker
+    # future = _global_client.submit(lambda: mzz.translate())
+    # multi_kerchunk = future.result()
+
     multi_kerchunk = mzz.translate()
 
+    print('write out')
     write_combined_kerchunk(
         output_directory,
         multi_kerchunk,
@@ -622,10 +861,17 @@ def main():
     args = parser.parse_args()
     print(args)
 
+    # Parse chunk overrides if provided
+    chunk_overrides = None
+    if args.chunk_overrides:
+        chunk_overrides = parse_chunk_overrides(args.chunk_overrides)
+        if chunk_overrides:
+            print(f"Chunk overrides: {chunk_overrides}")
+
     # initialize dask client
     get_cluster(
         cluster_setting = args.cluster[0],
-        num_processes=8,
+        num_processes=10,
         local_directory_pbs=PBS_LOCAL_DIR,
         log_directory_pbs=PBS_LOG_DIR
     )
@@ -635,7 +881,8 @@ def main():
             args.directory,
             args.output_directory,
             extensions=args.extensions,
-            dry_run=args.dry_run
+            dry_run=args.dry_run,
+            chunk_overrides=chunk_overrides
         )
     elif args.action == 'combine':
         process_kerchunk_combine(
@@ -644,10 +891,14 @@ def main():
             extensions=args.extensions,
             dry_run=args.dry_run,
             variables=args.variables,
+            drop_variables=args.drop_variables,
             regex=args.regex,
             output_filename=args.filename,
             make_remote=args.make_remote,
-            output_format=args.output_format[0]
+            output_format=args.output_format[0],
+            chunk_overrides=chunk_overrides,
+            combine_memory=args.combine_memory,
+            cluster_type=args.cluster[0]
         )
     else:
         print(f'action type "{args.action}" not recognized')
