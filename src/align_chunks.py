@@ -475,9 +475,12 @@ def _rechunk_single_file(file_job):
         missing = []
         for op in operations:
             var_name = op['variable']
+            target_chunks = op['target_chunks']
+            if isinstance(target_chunks, list):
+                target_chunks = tuple(target_chunks)
             if var_name in ds.data_vars:
                 ds[var_name].encoding = op['target_encoding'].copy()
-                applied.append((var_name, op['target_chunks']))
+                applied.append((var_name, target_chunks))
             else:
                 missing.append(var_name)
 
