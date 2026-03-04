@@ -434,6 +434,17 @@ def _deserialize_json_value(value):
     return json.loads(value)
 
 
+def _normalize_encoding_for_netcdf(encoding):
+    """Normalize encoding values to netCDF-writer compatible types."""
+    normalized = dict(encoding)
+    chunksizes = normalized.get('chunksizes')
+    if isinstance(chunksizes, list):
+        normalized['chunksizes'] = tuple(chunksizes)
+    elif isinstance(chunksizes, np.ndarray):
+        normalized['chunksizes'] = tuple(chunksizes.tolist())
+    return normalized
+
+
 def write_rechunk_plan_parquet(df_rechunk, parquet_path):
     """Write rechunk plan DataFrame to parquet with JSON-safe object columns."""
     output_dir = os.path.dirname(os.path.abspath(parquet_path))
@@ -479,12 +490,13 @@ def _rechunk_single_file(file_job):
             if isinstance(target_chunks, list):
                 target_chunks = tuple(target_chunks)
             if var_name in ds.data_vars:
-                ds[var_name].encoding = op['target_encoding'].copy()
+                ds[var_name].encoding = _normalize_encoding_for_netcdf(op['target_encoding'])
                 applied.append((var_name, target_chunks))
             else:
                 missing.append(var_name)
 
         ds.to_netcdf(output_filepath)
+        logging.info("Saved rechunked file: %s", output_filepath)
         ds.close()
         return {
             'relative_path': relative_path,
