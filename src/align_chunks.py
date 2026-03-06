@@ -633,7 +633,7 @@ def _get_parser():
     parser.add_argument(
         "--execute",
         action="store_true",
-        help="Actually rewrite files with majority chunk encoding. Default is dry run.",
+        help="Actually rewrite files with majority chunk encoding. Default is dry run which outputs a parquet plan.",
     )
     parser.add_argument(
         "--output-directory",
@@ -675,7 +675,7 @@ def _get_parser():
     parser.add_argument(
         "--output-parquet",
         type=str,
-        default=None,
+        required=True,
         help="Path to write computed rechunk plan parquet.",
     )
     return parser
