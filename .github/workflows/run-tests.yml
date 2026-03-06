@@ -1,4 +1,4 @@
-name: Python package
+name: Python Tests
 
 on: [push]
 
@@ -25,3 +25,4 @@ jobs:
       - run: |
           cd test
           python test_create_kerchunk.py
+          pytest test_align_chunks_serialization.py
