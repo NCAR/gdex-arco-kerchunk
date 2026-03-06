@@ -616,6 +616,11 @@ def process_kerchunk_combine(
     
     print(f'Number of files: {len(files)}')
 
+    # if no files to process, exit
+    if len(files) == 0:
+        print('No files to process. Exiting.')
+        sys.exit(1)
+
     time_varname = get_time_variable(files[0])
     # check if time variable name is found
     if time_varname is None:
@@ -725,11 +730,9 @@ def main():
         print(f'action type "{args.action}" not recognized')
         sys.exit(1)
 
-    # cleanup dask client
-    cleanup_dask_client()
-
 if __name__ == '__main__':
-    main()
-    # cleanup dask client
-    cleanup_dask_client()
+    try:
+        main()
+    finally:
+        cleanup_dask_client()
 
