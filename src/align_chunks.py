@@ -387,7 +387,7 @@ def identify_files_to_rechunk(mismatches):
                     'target_chunks': target_chunks,
                     'target_encoding': target_encoding,  # Keep as dict object
                     'file': item['file'],
-                    'file_path': item['file_path']
+                    'file_path': item['file_path'],
                 })
 
     # Create DataFrame
@@ -437,11 +437,16 @@ def _deserialize_json_value(value):
 def _normalize_encoding_for_netcdf(encoding):
     """Normalize encoding values to netCDF-writer compatible types."""
     normalized = dict(encoding)
+
+    if '_FillValue' not in normalized:
+        normalized['_FillValue'] = None
+
     chunksizes = normalized.get('chunksizes')
     if isinstance(chunksizes, list):
         normalized['chunksizes'] = tuple(chunksizes)
     elif isinstance(chunksizes, np.ndarray):
         normalized['chunksizes'] = tuple(chunksizes.tolist())
+
     return normalized
 
 
@@ -600,7 +605,7 @@ def execute_rechunk(rechunk_df, top_directory, output_directory, client):
                 interval_elapsed,
             )
             last_progress_time = now
-    
+
     logging.info("%s", "=" * 80)
     logging.info("RECHUNKING COMPLETE")
     logging.info("%s", "=" * 80)
