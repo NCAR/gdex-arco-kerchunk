@@ -730,3 +730,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+    # cleanup dask client
+    cleanup_dask_client()
+
