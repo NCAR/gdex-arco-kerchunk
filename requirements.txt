@@ -8,6 +8,7 @@ dask-jobqueue==0.9.0
 Deprecated==1.2.15
 distributed==2025.2.0
 fasteners==0.19
+fastparquet
 fsspec==2024.12.0
 h5py==3.13.0
 importlib_metadata==8.6.1
@@ -23,6 +24,7 @@ packaging==24.2
 pandas==2.2.3
 partd==1.4.2
 psutil==7.0.0
+pytest
 python-dateutil==2.9.0.post0
 pytz==2024.2
 PyYAML==6.0.2
