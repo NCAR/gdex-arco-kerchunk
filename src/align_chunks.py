@@ -138,7 +138,7 @@ def create_dask_client(args):
         log_directory=PBS_LOG_DIR,
         resource_spec='select=1:ncpus=1:mem=4GB',
         queue='gdex',
-        walltime='24:00:00',
+        walltime=args.walltime,
         interface='ext',
     )
     cluster.scale(jobs=args.num_workers)
@@ -662,6 +662,12 @@ def _get_parser():
         type=int,
         default=8,
         help="Number of local workers or PBS jobs to scale to.",
+    )
+    parser.add_argument(
+        "--walltime",
+        type=str,
+        default="24:00:00",
+        help="Walltime for PBS jobs in HH:MM:SS format (default: 24:00:00).",
     )
     parser.add_argument(
         "--input-parquet",
