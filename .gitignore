@@ -1,3 +1,6 @@
+# temp parquet files for data prechunking
+*.parq
+
 # testing json
 test_json/
 

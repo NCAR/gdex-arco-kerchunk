@@ -133,6 +133,15 @@ def _get_parser():
         """
     )
     parser.add_argument(
+        '--num_processes', '-n',
+        type=int,
+        default=8,
+        required=False,
+        nargs=None,
+        metavar='<number of processes>',
+        help='Number of dask jobs/workers to request when creating the cluster.'
+    )
+    parser.add_argument(
         '--dry_run', '-dr',
         action='store_true',
         required=False,
@@ -158,6 +167,15 @@ def _get_parser():
         nargs=None,
         metavar='<regular expression>',
         help='Combine references that match'
+    )
+
+    parser.add_argument(
+        '--regex_exclude', '-re',
+        type=unescaped_str,
+        required=False,
+        nargs=None,
+        metavar='<regular expression>',
+        help='Exclude files that match this regex pattern'
     )
 
     parser.add_argument(
@@ -398,6 +416,35 @@ def find_files(directory, regex, extensions):
                 all_files.append(full_path)
     return all_files
 
+def exclude_files(
+    files: list,
+    regex: str
+):
+    """
+    Exclude files that match the regex. 
+    Performed after find_files to filter 
+    out files that match the regex pattern.
+    
+    Parameters
+    ----------
+    files : list
+        list of file paths to filter
+    regex : str
+        regular expression pattern to match files to exclude
+
+    Returns
+    -------   
+    included_files : list
+        list of file paths that do not match the regex pattern
+    
+    """
+    pattern = re.compile(regex)
+    included_files = []
+    for f in files:
+        if not pattern.match(f):
+            included_files.append(f)
+    return included_files
+
 def get_time_variable(filename):
     """Get time variable name in the file
     Will try different methods for finding lat in decreasing authority.
@@ -534,6 +581,7 @@ def process_kerchunk_combine(
     output_directory='.',
     extensions=None,
     regex=None,
+    regex_exclude=None,
     dry_run=False,
     variables=None,
     output_filename="",
@@ -561,7 +609,17 @@ def process_kerchunk_combine(
     # find files to process
     files = find_files(directory, regex, extensions)
     files = sorted(files)
+    
+    # apply exclude filter if specified
+    if regex_exclude:
+        files = exclude_files(files, regex_exclude)
+    
     print(f'Number of files: {len(files)}')
+
+    # if no files to process, exit
+    if len(files) == 0:
+        print('No files to process. Exiting.')
+        sys.exit(1)
 
     time_varname = get_time_variable(files[0])
     # check if time variable name is found
@@ -590,6 +648,9 @@ def process_kerchunk_combine(
             lazy_results = []
             end = time.time()
             print(f'Done intermediate. Elapsed time ({end-start} seconds)')
+            print('dask computed partial (partial data in client memory)')
+            memory_gb = process.memory_info().rss / 1e9
+            print(f'Client process memory usage (GB): {memory_gb:.2f}')
 
     all_refs.extend(dask.compute(*lazy_results))
 
@@ -632,6 +693,7 @@ def main():
     print(sys.argv)
     if len(sys.argv) == 1:
         parser.print_help()
+        
         sys.exit(1)
     args = parser.parse_args()
     print(args)
@@ -639,7 +701,7 @@ def main():
     # initialize dask client
     get_cluster(
         cluster_setting = args.cluster[0],
-        num_processes=8,
+        num_processes=args.num_processes,
         local_directory_pbs=PBS_LOCAL_DIR,
         log_directory_pbs=PBS_LOG_DIR
     )
@@ -659,6 +721,7 @@ def main():
             dry_run=args.dry_run,
             variables=args.variables,
             regex=args.regex,
+            regex_exclude=args.regex_exclude,
             output_filename=args.filename,
             make_remote=args.make_remote,
             output_format=args.output_format[0]
@@ -667,8 +730,9 @@ def main():
         print(f'action type "{args.action}" not recognized')
         sys.exit(1)
 
-    # cleanup dask client
-    cleanup_dask_client()
-
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    finally:
+        cleanup_dask_client()
+
