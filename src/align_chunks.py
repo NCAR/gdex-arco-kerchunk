@@ -483,6 +483,16 @@ def _rechunk_single_file(file_job):
     relative_path = file_job['relative_path']
     operations = file_job['operations']
 
+    if os.path.exists(output_filepath):
+        logging.info("Skipping (already exists): %s", output_filepath)
+        return {
+            'relative_path': relative_path,
+            'output_filepath': output_filepath,
+            'applied': [],
+            'missing': [],
+            'error': None,
+        }
+
     try:
         os.makedirs(os.path.dirname(output_filepath), exist_ok=True)
         ds = xr.open_dataset(input_filepath, decode_times=False, chunks={})
@@ -583,6 +593,9 @@ def execute_rechunk(rechunk_df, top_directory, output_directory, client):
         for result in batch_results:
             if result['error']:
                 logging.error("    [%s] %s", result['relative_path'], result['error'])
+                continue
+            if not result['applied'] and not result['missing']:
+                logging.info("    No changes needed for: %s", result['relative_path'])
                 continue
 
             logging.info("    Saved to: %s", result['output_filepath'])
