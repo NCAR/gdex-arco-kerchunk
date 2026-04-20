@@ -188,6 +188,16 @@ def _get_parser():
         help='Specify the output format for the combined references.'
     )
 
+    parser.add_argument(
+        '--exclude_variables', '-ev',
+        type=str,
+        required=False,
+        nargs='+',
+        metavar='<variable names>',
+        help="Exclude specific variables from the combined kerchunk file. Variable names are case sensitive.",
+        default=[]
+    )
+
     return parser
 
 
@@ -509,6 +519,24 @@ def separate_vars(refs, var_names):
         updated_refs.append(ref)
     return updated_refs
 
+def exclude_vars(refs, exclude_var_names):
+    """Excludes specific variables from reference files object."""
+    # Create a set of variables to exclude
+    exclude_values = set(exclude_var_names)
+
+    # Process each reference file object
+    # Remove variables in exclude_values
+    updated_refs = []
+    for ref in refs:
+        new_json = {}
+        for i in ref['refs']:
+            varname = i.split('/')[0]
+            if varname not in exclude_values:
+                new_json[i] = ref['refs'][i]
+        ref['refs'] = new_json
+        updated_refs.append(ref)
+    return updated_refs
+
 # def separate_combine_write_all_vars(refs, var_names, make_remote=False):
 #     """Extracts specific variables from refs.
 #     """
@@ -584,6 +612,7 @@ def process_kerchunk_combine(
     regex_exclude=None,
     dry_run=False,
     variables=None,
+    variables_exclude=None,
     output_filename="",
     make_remote=False,
     output_format="json"
@@ -666,6 +695,9 @@ def process_kerchunk_combine(
     if len(variables) > 0:
         all_refs = separate_vars(all_refs, variables)
 
+    if len(variables_exclude) > 0:
+        all_refs = exclude_vars(all_refs, variables_exclude)
+
     print('combining')
     mzz = MultiZarrToZarr(
            all_refs,
@@ -720,6 +752,7 @@ def main():
             extensions=args.extensions,
             dry_run=args.dry_run,
             variables=args.variables,
+            variables_exclude=args.variables_exclude,
             regex=args.regex,
             regex_exclude=args.regex_exclude,
             output_filename=args.filename,
