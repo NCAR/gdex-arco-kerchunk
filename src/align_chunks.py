@@ -101,6 +101,8 @@ def collect_matching_files(top_directory, pattern, exclude_pattern=None):
     for dirpath, _, filenames in os.walk(top_directory):
         for filename in filenames:
             if Path(filename).match(pattern):
+                # exclude_pattern is applied as a second filter after pattern matching
+                #  this is per file scan and all exclude patterns are tested against the filename
                 if exclude_pattern is None or not any(Path(filename).match(p) for p in exclude_pattern):
                     matched_files.append(os.path.join(dirpath, filename))
     return sorted(matched_files)
