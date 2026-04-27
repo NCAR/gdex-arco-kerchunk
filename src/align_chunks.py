@@ -101,7 +101,7 @@ def collect_matching_files(top_directory, pattern, exclude_pattern=None):
     for dirpath, _, filenames in os.walk(top_directory):
         for filename in filenames:
             if Path(filename).match(pattern):
-                if exclude_pattern is None or not Path(filename).match(exclude_pattern):
+                if exclude_pattern is None or not any(Path(filename).match(p) for p in exclude_pattern):
                     matched_files.append(os.path.join(dirpath, filename))
     return sorted(matched_files)
 
@@ -150,14 +150,36 @@ def create_dask_client(args):
     return client, cluster
 
 
-def _extract_file_chunk_info(filepath, top_directory, file_index):
-    """Extract chunk/encoding info for all variables in one NetCDF file."""
+def _extract_file_chunk_info(filepath, top_directory, file_index, exclude_variables=None):
+    """
+    Extract chunk/encoding info for all variables in one NetCDF file.
+    
+    Parameters:
+    -----------
+    filepath : str
+        Path to the NetCDF file.
+    top_directory : str
+        Top-level directory for relative path calculation.
+    file_index : int
+        Index of the file in the list of files.
+    exclude_variables : list or set, optional
+        Variables to exclude from chunk/encoding extraction inside the NetCDF file.
+
+    """
     relative_path = os.path.relpath(filepath, top_directory)
     records = []
+
+    if exclude_variables is None:
+        exclude_variables = set()
+    else:
+        exclude_variables = set(exclude_variables)
+
 
     try:
         ds = xr.open_dataset(filepath, decode_times=False, chunks={})
         for var_name in ds.data_vars:
+            if var_name in exclude_variables:
+                continue
             var = ds[var_name]
 
             if hasattr(var, 'encoding') and 'chunksizes' in var.encoding:
@@ -185,7 +207,7 @@ def _extract_file_chunk_info(filepath, top_directory, file_index):
         return {'filepath': filepath, 'records': [], 'error': str(e)}
 
 
-def check_chunk_consistency(file_paths, top_directory, client):
+def check_chunk_consistency(file_paths, top_directory, client, exclude_variables=None):
     """
     Check for chunk size mismatches across NetCDF files.
     
@@ -195,12 +217,19 @@ def check_chunk_consistency(file_paths, top_directory, client):
         List of file paths to check.
     top_directory : str
         Top-level directory used to compute relative file paths for reporting.
+    client : dask.distributed.Client
+        Dask client for parallel processing.
+    exclude_variables : list or set, optional
+        Variables to exclude from chunk consistency checks. 
+        these are variable in the NetCDF files
     """
     files = sorted(file_paths)
     
     if not files:
         logging.warning("No files found matching pattern under: %s", top_directory)
         return
+    if exclude_variables:
+        logging.info("Excluding variables from chunk consistency checks: %s", exclude_variables)
     
     logging.info("Checking %s files for chunk consistency...", len(files))
     logging.info("%s", "=" * 80)
@@ -212,7 +241,7 @@ def check_chunk_consistency(file_paths, top_directory, client):
     last_progress_time = start_time
 
     delayed_tasks = [
-        dask.delayed(_extract_file_chunk_info)(filepath, top_directory, i)
+        dask.delayed(_extract_file_chunk_info)(filepath, top_directory, i, exclude_variables=exclude_variables)
         for i, filepath in enumerate(files, start=1)
     ]
 
@@ -672,6 +701,7 @@ def _get_parser():
     )
     subparsers = parser.add_subparsers(dest='command', required=True)
 
+    # Subparser for the planning stage
     plan_parser = subparsers.add_parser(
         'plan',
         help="Scan files for chunk inconsistencies and write a rechunk plan parquet.",
@@ -695,7 +725,17 @@ def _get_parser():
         required=True,
         help="Path to write the rechunk plan parquet file.",
     )
+    plan_parser.add_argument(
+        "--exclude-variables",
+        type=str,
+        default=None,
+        help=(
+            "List of variable names to exclude from chunk consistency checks. "
+            "Useful for variables that are known to have different chunking and should be ignored."
+        ),
+    )   
 
+    # Subparser for the execution stage
     execute_parser = subparsers.add_parser(
         'execute',
         help="Execute rechunking from an existing rechunk plan parquet.",
@@ -746,7 +786,7 @@ def main():
                 f" (excluding: {args.exclude_pattern})" if args.exclude_pattern else "",
             )
 
-            df_rechunk = check_chunk_consistency(matched_files, top_directory, client)
+            df_rechunk = check_chunk_consistency(matched_files, top_directory, client, exclude_variables=args.exclude_variables)
 
             if df_rechunk is None or df_rechunk.empty:
                 logging.info("✓ No rechunking needed!")
