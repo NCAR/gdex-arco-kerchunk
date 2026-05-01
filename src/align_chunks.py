@@ -242,6 +242,9 @@ def check_chunk_consistency(file_paths, top_directory, client, exclude_variables
     start_time = time.time()
     last_progress_time = start_time
 
+    for i, filepath in enumerate(files, start=1):
+        _extract_file_chunk_info(filepath, top_directory, i, exclude_variables=exclude_variables)
+        
     delayed_tasks = [
         dask.delayed(_extract_file_chunk_info)(filepath, top_directory, i, exclude_variables=exclude_variables)
         for i, filepath in enumerate(files, start=1)
@@ -530,18 +533,60 @@ def _rechunk_single_file(file_job):
 
         applied = []
         missing = []
+        file_encodings = {}
         for op in operations:
             var_name = op['variable']
             target_chunks = op['target_chunks']
             if isinstance(target_chunks, list):
                 target_chunks = tuple(target_chunks)
             if var_name in ds.data_vars:
-                ds[var_name].encoding = _normalize_encoding_for_netcdf(op['target_encoding'])
+                enc = _normalize_encoding_for_netcdf(op['target_encoding'])
+                chunksizes = enc.get('chunksizes')
+                if var_name == 'dz':
+                    # drop
+                    ds = ds.drop_vars('dz')
+                    ds = ds.drop_vars('z_t')
+                    
+                    #create dataarray for z_t and this has to be the new z_t dimension for dz
+                    da_zt = xr.DataArray(
+                        data=np.array([500, 1500, 2500, 3500, 4500, 5500, 6500, 7500, 8500, 9500, 10500,
+ 11500, 12500, 13500, 14500, 15500, 16509.84, 17547.9, 18629.13, 19766.03,
+ 20971.14, 22257.83, 23640.88, 25137.02, 26765.42, 28548.37, 30511.92,
+ 32686.8, 35109.35, 37822.76, 40878.46, 44337.77, 48273.67, 52772.8,
+ 57937.29, 63886.26, 70756.33, 78700.25, 87882.52, 98470.59, 110620.4,
+ 124456.7, 140049.7, 157394.6, 176400.3, 196894.4, 218645.7, 241397.2,
+ 264900.1, 288938.5, 313340.5, 337979.3, 362767, 387645.2, 412576.8,
+ 437539.2, 462519, 487508.3, 512502.8, 537500, 562499.1, 587499.1]),
+                        dims=['z_t'],
+                    )
+                    # set z_t to dimension of dz
+                    ds['z_t'] = da_zt
+                    ds = ds.assign_coords(z_t=ds['z_t'])
+                    # create dataarray
+                    da_dz = xr.DataArray(
+                        data=np.array([1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000,
+ 1000, 1000, 1000, 1000, 1019.681, 1056.448, 1105.995, 1167.807, 1242.413,
+ 1330.968, 1435.141, 1557.126, 1699.68, 1866.212, 2060.902, 2288.852,
+ 2556.247, 2870.575, 3240.837, 3677.772, 4194.031, 4804.224, 5524.754,
+ 6373.192, 7366.945, 8520.893, 9843.658, 11332.47, 12967.2, 14705.34,
+ 16480.71, 18209.13, 19802.23, 21185.96, 22316.51, 23186.49, 23819.45,
+ 24257.22, 24546.78, 24731.01, 24844.33, 24911.97, 24951.29, 24973.59,
+ 24985.96, 24992.67, 24996.24, 24998.11, 25000, 25000]),
+                        dims=['z_t'],
+                        coords={'z_t': da_zt}
+                    )
+                    ds['dz'] = da_dz
+                if chunksizes is not None:
+                    enc['contiguous'] = False
+                    chunks_dict = dict(zip(ds[var_name].dims, chunksizes))
+                    ds[var_name] = ds[var_name].chunk(chunks_dict)
+
+                file_encodings[var_name] = enc
                 applied.append((var_name, target_chunks))
             else:
                 missing.append(var_name)
 
-        ds.to_netcdf(output_filepath)
+        ds.to_netcdf(output_filepath, encoding=file_encodings)
         logging.info("Saved rechunked file: %s", output_filepath)
         ds.close()
         return {
@@ -591,6 +636,9 @@ def execute_rechunk(rechunk_df, top_directory, output_directory, client):
     for input_filepath, group in grouped:
         relative_path = os.path.relpath(input_filepath, top_directory)
         output_filepath = os.path.join(output_directory, relative_path)
+        if os.path.exists(output_filepath):
+            logging.info("Skipping (already exists): %s", output_filepath)
+            continue
         operations = []
         for _, row in group.iterrows():
             operations.append(
@@ -628,7 +676,7 @@ def execute_rechunk(rechunk_df, top_directory, output_directory, client):
             if not result['applied'] and not result['missing']:
                 logging.info("    No changes needed for: %s", result['relative_path'])
                 continue
-
+            
             logging.info("    Saved to: %s", result['output_filepath'])
             for var_name, target_chunks in result['applied']:
                 logging.info("   - %s: chunks %s", var_name, target_chunks)
@@ -717,7 +765,7 @@ def _get_parser():
     )
     plan_parser.add_argument(
         "--exclude-pattern",
-        type=str,
+        nargs='+',
         default=None,
         help="Filename glob pattern to exclude from the results of --pattern. Applied as a second filter after --pattern.",
     )
@@ -729,7 +777,7 @@ def _get_parser():
     )
     plan_parser.add_argument(
         "--exclude-variables",
-        type=str,
+        nargs='+',
         default=None,
         help=(
             "List of variable names to exclude from chunk consistency checks. "
