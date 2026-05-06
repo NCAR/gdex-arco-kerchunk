@@ -39,8 +39,8 @@ from kerchunk.combine import MultiZarrToZarr
 
 # special keyword to indicate all variables should be separated
 ALL_VARIABLES_KEYWORD = "ALL"
-PBS_LOCAL_DIR = '/lustre/desc1/scratch/chiaweih/temp_dask'
-PBS_LOG_DIR = '/lustre/desc1/scratch/chiaweih/temp_pbs'
+PBS_LOCAL_DIR = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'temp_dask')
+PBS_LOG_DIR = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'temp_pbs')
 # global filesystem object
 fs = LocalFileSystem()
 # default fs.open(file, **so) arguments dictionary for writing kerchunk reference files
@@ -624,6 +624,8 @@ def process_kerchunk_combine(
         extensions = []
     if variables is None:
         variables = []
+    if variables_exclude is None:
+        variables_exclude = []
 
     # monitor memory usage on the client process (large aggregations can cause memory issues)
     process = psutil.Process(os.getpid())
@@ -746,13 +748,17 @@ def main():
             dry_run=args.dry_run
         )
     elif args.action == 'combine':
+        if args.exclude_variables == []:
+            exc_variables = None
+        else:
+            exc_variables = args.exclude_variables
         process_kerchunk_combine(
             args.directory,
             args.output_directory,
             extensions=args.extensions,
             dry_run=args.dry_run,
             variables=args.variables,
-            variables_exclude=args.variables_exclude,
+            variables_exclude=exc_variables,
             regex=args.regex,
             regex_exclude=args.regex_exclude,
             output_filename=args.filename,
