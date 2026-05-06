@@ -7,24 +7,28 @@ For each mismatch, the script chooses the most common (majority) chunk pattern
 as the target.
 
 Behavior:
-- Default mode is dry run (report only, no file writes).
-- Execute mode rewrites files using the majority chunk encoding.
-- In execute mode, rewritten files are written under --output-directory while
+- Two-stage workflow: 'plan' scans files and writes a parquet rechunk plan;
+    'execute' reads the plan and rewrites files with the target chunk encoding.
+- In execute stage, rewritten files are written under --output-directory while
     preserving subdirectory structure relative to top_directory.
 
 Usage:
-        python src/align_chunks.py <top_directory> [--pattern "*.nc"] [--log-name LOG]
-        python src/align_chunks.py <top_directory> --execute --output-directory <out_dir>
+        python src/align_chunks.py plan <top_directory> --output-parquet <plan.parq>
+        python src/align_chunks.py execute <top_directory> --input-parquet <plan.parq> --output-directory <out_dir>
 
 Examples:
-        # Dry run (default)
-        python src/align_chunks.py /gdex/data/d651007
+        # Plan: scan with default pattern
+        python src/align_chunks.py plan /gdex/data/d651007 \
+                --output-parquet /lustre/desc1/scratch/chiaweih/plan.parq
 
-        # Dry run with custom pattern
-        python src/align_chunks.py /gdex/data/d651007 --pattern "*.nc"
+        # Plan: scan with custom pattern and exclude filter
+        python src/align_chunks.py plan /gdex/data/d651007 \
+                --pattern "wrf2d_*.nc" --exclude-pattern "*_backup.nc" \
+                --output-parquet /lustre/desc1/scratch/chiaweih/plan.parq
 
-        # Execute rechunking based on majority chunk size
-        python src/align_chunks.py /gdex/data/d651007 --execute \
+        # Execute: rechunk files based on the plan
+        python src/align_chunks.py execute /gdex/data/d651007 \
+                --input-parquet /lustre/desc1/scratch/chiaweih/plan.parq \
                 --output-directory /lustre/desc1/scratch/chiaweih/rechunked
 """
 
@@ -44,27 +48,22 @@ from pathlib import Path
 
 
 # Dask temp dir for PBS workers - adjust as needed for your environment
-PBS_LOCAL_DIR = '/lustre/desc1/scratch/chiaweih/temp_dask'
-PBS_LOG_DIR = '/lustre/desc1/scratch/chiaweih/temp_pbs'
+PBS_LOCAL_DIR = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'temp_dask')
+PBS_LOG_DIR = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'temp_pbs')
 
 
-def setup_logging(script_path, log_name="align_chunks.log"):
+def setup_logging(log_file="align_chunks.log"):
     """Configure logging to both console and a log file.
 
     Parameters
     ----------
-    script_path : str
-        Path to the running script; used to locate the log file directory.
-    log_name : str
-        Log filename.
-
+    log_file : str
+        Path to the log file.
     Returns
     -------
     str
         Full path to the configured log file.
     """
-    log_dir = os.path.dirname(os.path.abspath(script_path))
-    log_file = os.path.join(log_dir, log_name)
 
     if os.path.exists(log_file):
         os.remove(log_file)
@@ -96,13 +95,16 @@ def setup_logging(script_path, log_name="align_chunks.log"):
     return log_file
 
 
-def collect_matching_files(top_directory, pattern):
-    """Collect all files under top_directory that match pattern."""
+def collect_matching_files(top_directory, pattern, exclude_pattern=None):
+    """Collect all files under top_directory that match pattern, optionally excluding files that match exclude_pattern."""
     matched_files = []
     for dirpath, _, filenames in os.walk(top_directory):
         for filename in filenames:
             if Path(filename).match(pattern):
-                matched_files.append(os.path.join(dirpath, filename))
+                # exclude_pattern is applied as a second filter after pattern matching
+                #  this is per file scan and all exclude patterns are tested against the filename
+                if exclude_pattern is None or not any(Path(filename).match(p) for p in exclude_pattern):
+                    matched_files.append(os.path.join(dirpath, filename))
     return sorted(matched_files)
 
 
@@ -150,14 +152,37 @@ def create_dask_client(args):
     return client, cluster
 
 
-def _extract_file_chunk_info(filepath, top_directory, file_index):
-    """Extract chunk/encoding info for all variables in one NetCDF file."""
+def _extract_file_chunk_info(filepath, top_directory, file_index, exclude_variables=None):
+    """
+    Extract chunk/encoding info for all variables in one NetCDF file.
+    
+    Parameters:
+    -----------
+    filepath : str
+        Path to the NetCDF file.
+    top_directory : str
+        Top-level directory for relative path calculation.
+    file_index : int
+        Index of the file in the list of files.
+    exclude_variables : list or set, optional
+        Variables to exclude from chunk/encoding extraction inside the NetCDF file.
+
+    """
     relative_path = os.path.relpath(filepath, top_directory)
     records = []
 
+    if exclude_variables is None:
+        exclude_variables = set()
+    else:
+        exclude_variables = set(exclude_variables)
+
+
     try:
         ds = xr.open_dataset(filepath, decode_times=False, chunks={})
-        for var_name in ds.data_vars:
+        # use .variables to include both data variables and coordinates (some files may have different chunking for coords)
+        for var_name in ds.variables:
+            if var_name in exclude_variables:
+                continue
             var = ds[var_name]
 
             if hasattr(var, 'encoding') and 'chunksizes' in var.encoding:
@@ -185,7 +210,7 @@ def _extract_file_chunk_info(filepath, top_directory, file_index):
         return {'filepath': filepath, 'records': [], 'error': str(e)}
 
 
-def check_chunk_consistency(file_paths, top_directory, client):
+def check_chunk_consistency(file_paths, top_directory, client, exclude_variables=None):
     """
     Check for chunk size mismatches across NetCDF files.
     
@@ -195,12 +220,19 @@ def check_chunk_consistency(file_paths, top_directory, client):
         List of file paths to check.
     top_directory : str
         Top-level directory used to compute relative file paths for reporting.
+    client : dask.distributed.Client
+        Dask client for parallel processing.
+    exclude_variables : list or set, optional
+        Variables to exclude from chunk consistency checks. 
+        these are variable in the NetCDF files
     """
     files = sorted(file_paths)
     
     if not files:
         logging.warning("No files found matching pattern under: %s", top_directory)
         return
+    if exclude_variables:
+        logging.info("Excluding variables from chunk consistency checks: %s", exclude_variables)
     
     logging.info("Checking %s files for chunk consistency...", len(files))
     logging.info("%s", "=" * 80)
@@ -210,9 +242,10 @@ def check_chunk_consistency(file_paths, top_directory, client):
     progress_interval = 100
     start_time = time.time()
     last_progress_time = start_time
-
+    
+    # Create delayed tasks for parallel chunk info extraction
     delayed_tasks = [
-        dask.delayed(_extract_file_chunk_info)(filepath, top_directory, i)
+        dask.delayed(_extract_file_chunk_info)(filepath, top_directory, i, exclude_variables=exclude_variables)
         for i, filepath in enumerate(files, start=1)
     ]
 
@@ -499,18 +532,27 @@ def _rechunk_single_file(file_job):
 
         applied = []
         missing = []
+        file_encodings = {}
         for op in operations:
             var_name = op['variable']
             target_chunks = op['target_chunks']
             if isinstance(target_chunks, list):
                 target_chunks = tuple(target_chunks)
-            if var_name in ds.data_vars:
-                ds[var_name].encoding = _normalize_encoding_for_netcdf(op['target_encoding'])
+            # use .variables to include both data variables and coordinates (some files may have different chunking for coords)
+            if var_name in ds.variables:
+                enc = _normalize_encoding_for_netcdf(op['target_encoding'])
+                chunksizes = enc.get('chunksizes')
+                if chunksizes is not None:
+                    enc['contiguous'] = False
+                    chunks_dict = dict(zip(ds[var_name].dims, chunksizes))
+                    ds[var_name] = ds[var_name].chunk(chunks_dict)
+
+                file_encodings[var_name] = enc
                 applied.append((var_name, target_chunks))
             else:
                 missing.append(var_name)
 
-        ds.to_netcdf(output_filepath)
+        ds.to_netcdf(output_filepath, encoding=file_encodings)
         logging.info("Saved rechunked file: %s", output_filepath)
         ds.close()
         return {
@@ -560,6 +602,9 @@ def execute_rechunk(rechunk_df, top_directory, output_directory, client):
     for input_filepath, group in grouped:
         relative_path = os.path.relpath(input_filepath, top_directory)
         output_filepath = os.path.join(output_directory, relative_path)
+        if os.path.exists(output_filepath):
+            logging.info("Skipping (already exists): %s", output_filepath)
+            continue
         operations = []
         for _, row in group.iterrows():
             operations.append(
@@ -597,7 +642,7 @@ def execute_rechunk(rechunk_df, top_directory, output_directory, client):
             if not result['applied'] and not result['missing']:
                 logging.info("    No changes needed for: %s", result['relative_path'])
                 continue
-
+            
             logging.info("    Saved to: %s", result['output_filepath'])
             for var_name, target_chunks in result['applied']:
                 logging.info("   - %s: chunks %s", var_name, target_chunks)
@@ -624,79 +669,110 @@ def execute_rechunk(rechunk_df, top_directory, output_directory, client):
     logging.info("%s", "=" * 80)
 
 
-def _get_parser():
-    """Create command line parser for chunk consistency check and rechunking."""
-    parser = argparse.ArgumentParser(
-        description=(
-            "Walk a top-level directory, detect NetCDF chunk-size inconsistencies, "
-            "and optionally rechunk files using the majority chunk pattern."
-        )
-    )
-    parser.add_argument(
+def _add_common_args(p):
+    """
+    Add common command line arguments for both 'plan' and 'execute' subcommands.
+    """
+    p.add_argument(
         "top_directory",
         type=str,
         help="Top-level directory to recursively scan for NetCDF files.",
     )
-    parser.add_argument(
-        "--pattern",
-        type=str,
-        default="*.nc",
-        help="Filename glob pattern to use within each directory (default: *.nc).",
-    )
-    parser.add_argument(
-        "--execute",
-        action="store_true",
-        help="Actually rewrite files with majority chunk encoding. Default is dry run which outputs a parquet plan.",
-    )
-    parser.add_argument(
-        "--output-directory",
-        type=str,
-        default=None,
-        help=(
-            "Root output directory for rewritten files in execute mode. "
-            "Subdirectory structure relative to top_directory is preserved."
-        ),
-    )
-    parser.add_argument(
-        "--log-name",
+    p.add_argument(
+        "--log-file",
         type=str,
         default="align_chunks.log",
-        help="Log filename to pass to setup_logging.",
+        help="Log filename (default: align_chunks.log).",
     )
-    parser.add_argument(
+    p.add_argument(
         "--dask-cluster",
         type=str,
         choices=["local", "pbs"],
         default="pbs",
-        help="Dask cluster backend for parallel scan tasks.",
+        help="Dask cluster backend (default: pbs).",
     )
-    parser.add_argument(
+    p.add_argument(
         "--num-workers",
         type=int,
         default=8,
-        help="Number of local workers or PBS jobs to scale to.",
+        help="Number of local workers or PBS jobs to scale to (default: 8).",
     )
-    parser.add_argument(
+    p.add_argument(
         "--walltime",
         type=str,
         default="24:00:00",
         help="Walltime for PBS jobs in HH:MM:SS format (default: 24:00:00).",
     )
-    parser.add_argument(
-        "--input-parquet",
-        type=str,
-        default=None,
-        help=(
-            "Path to existing parquet rechunk plan. If it exists, skip scanning and "
-            "go directly to execute rechunk."
-        ),
+
+    return p
+
+def _get_parser():
+    """Create command line parser for chunk consistency check and rechunking."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Walk a top-level directory, detect NetCDF chunk-size inconsistencies, "
+            "and rechunk files using the majority chunk pattern. "
+            "Two stages: 'plan' scans and writes a parquet plan; 'execute' applies the plan."
+        )
     )
-    parser.add_argument(
+    subparsers = parser.add_subparsers(dest='command', required=True)
+
+    # Subparser for the planning stage
+    plan_parser = subparsers.add_parser(
+        'plan',
+        help="Scan files for chunk inconsistencies and write a rechunk plan parquet.",
+    )
+    plan_parser = _add_common_args(plan_parser)
+    plan_parser.add_argument(
+        "--pattern",
+        type=str,
+        default="*.nc",
+        help="Filename glob pattern to use within each directory (default: *.nc).",
+    )
+    plan_parser.add_argument(
+        "--exclude-pattern",
+        nargs='+',
+        default=None,
+        help="Filename glob pattern to exclude from the results of --pattern. Applied as a second filter after --pattern.",
+    )
+    plan_parser.add_argument(
         "--output-parquet",
         type=str,
         required=True,
-        help="Path to write computed rechunk plan parquet.",
+        help="Path to write the rechunk plan parquet file.",
     )
+    plan_parser.add_argument(
+        "--exclude-variables",
+        nargs='+',
+        default=None,
+        help=(
+            "List of variable names to exclude from chunk consistency checks. "
+            "Useful for variables that are known to have different chunking and should be ignored."
+        ),
+    )   
+
+    # Subparser for the execution stage
+    execute_parser = subparsers.add_parser(
+        'execute',
+        help="Execute rechunking from an existing rechunk plan parquet.",
+    )
+    execute_parser = _add_common_args(execute_parser)
+    execute_parser.add_argument(
+        "--input-parquet",
+        type=str,
+        required=True,
+        help="Path to the rechunk plan parquet file produced by the plan stage.",
+    )
+    execute_parser.add_argument(
+        "--output-directory",
+        type=str,
+        required=True,
+        help=(
+            "Root output directory for rewritten files. "
+            "Subdirectory structure relative to top_directory is preserved."
+        ),
+    )
+
     return parser
 
 
@@ -709,61 +785,47 @@ def main():
     if not os.path.isdir(top_directory):
         parser.error(f'top_directory does not exist or is not a directory: {top_directory}')
 
-    # dry run by default; execute mode requires output directory
-    dry_run = not args.execute
-    if not dry_run and not args.output_directory:
-        parser.error('--output-directory is required when --execute is used')
-
-    input_parquet_exists = bool(args.input_parquet and os.path.exists(args.input_parquet))
-    if dry_run and not args.output_parquet and not input_parquet_exists:
-        parser.error('--output-parquet is required when running in dry-run mode')
-
-    output_directory = None
-    if args.output_directory:
-        output_directory = os.path.abspath(args.output_directory)
-
-    setup_logging(__file__, log_name=args.log_name)
+    setup_logging(log_file=args.log_file)
 
     client = None
     cluster = None
     try:
         client, cluster = create_dask_client(args)
 
-        df_rechunk = None
-        if args.input_parquet and os.path.exists(args.input_parquet):
-            logging.info("Input parquet exists, loading rechunk plan: %s", args.input_parquet)
-            df_rechunk = read_rechunk_plan_parquet(args.input_parquet)
-            if dry_run:
-                logging.info("Input parquet mode selected; switching to execute mode.")
-                dry_run = False
-        else:
-            if args.input_parquet:
-                logging.info("Input parquet not found (%s); running full scan workflow.", args.input_parquet)
+        if args.command == 'plan':
+            matched_files = collect_matching_files(top_directory, args.pattern, args.exclude_pattern)
+            logging.info(
+                "Matched %s files under %s with pattern %s%s",
+                len(matched_files),
+                top_directory,
+                args.pattern,
+                f" (excluding: {args.exclude_pattern})" if args.exclude_pattern else "",
+            )
 
-            matched_files = collect_matching_files(top_directory, args.pattern)
-            logging.info("Matched %s files under %s with pattern %s", len(matched_files), top_directory, args.pattern)
+            df_rechunk = check_chunk_consistency(matched_files, top_directory, client, exclude_variables=args.exclude_variables)
 
-            df_rechunk = check_chunk_consistency(matched_files, top_directory, client)
-            if args.output_parquet and df_rechunk is not None and not df_rechunk.empty:
+            if df_rechunk is None or df_rechunk.empty:
+                logging.info("✓ No rechunking needed!")
+            else:
                 write_rechunk_plan_parquet(df_rechunk, args.output_parquet)
+                logging.info("Total files requiring rechunk: %s", df_rechunk['file_path'].nunique())
 
-        if df_rechunk is None or df_rechunk.empty:
-            logging.info("✓ No rechunking needed!")
-            return
+        elif args.command == 'execute':
+            output_directory = os.path.abspath(args.output_directory)
 
-        total_files_to_rechunk = df_rechunk['file_path'].nunique()
-        logging.info("Total files requiring rechunk (global): %s", total_files_to_rechunk)
+            if not os.path.exists(args.input_parquet):
+                parser.error(f'--input-parquet file not found: {args.input_parquet}')
 
-        if dry_run:
-            logging.info("Dry run mode: no changes will be made.")
-        else:
-            execute_rechunk(df_rechunk, top_directory, output_directory, client)
+            df_rechunk = read_rechunk_plan_parquet(args.input_parquet)
+
+            if df_rechunk is None or df_rechunk.empty:
+                logging.warning("✓ Rechunk plan empty!")
+            else:
+                logging.info("Total files requiring rechunk: %s", df_rechunk['file_path'].nunique())
+                execute_rechunk(df_rechunk, top_directory, output_directory, client)
 
         logging.info('%s', '##################################################################################')
         logging.info('DONE')
-        if 'matched_files' in locals():
-            logging.info('Total files scanned: %s', len(matched_files))
-        logging.info('Total files needing rechunk: %s', total_files_to_rechunk)
     finally:
         if client is not None:
             client.close()
