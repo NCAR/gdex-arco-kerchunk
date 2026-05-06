@@ -242,10 +242,8 @@ def check_chunk_consistency(file_paths, top_directory, client, exclude_variables
     progress_interval = 100
     start_time = time.time()
     last_progress_time = start_time
-
-    for i, filepath in enumerate(files, start=1):
-        _extract_file_chunk_info(filepath, top_directory, i, exclude_variables=exclude_variables)
-        
+    
+    # Create delayed tasks for parallel chunk info extraction
     delayed_tasks = [
         dask.delayed(_extract_file_chunk_info)(filepath, top_directory, i, exclude_variables=exclude_variables)
         for i, filepath in enumerate(files, start=1)
