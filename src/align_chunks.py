@@ -48,8 +48,8 @@ from pathlib import Path
 
 
 # Dask temp dir for PBS workers - adjust as needed for your environment
-PBS_LOCAL_DIR = '/lustre/desc1/scratch/chiaweih/temp_dask'
-PBS_LOG_DIR = '/lustre/desc1/scratch/chiaweih/temp_pbs'
+PBS_LOCAL_DIR = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'temp_dask')
+PBS_LOG_DIR = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'temp_pbs')
 
 
 def setup_logging(log_file="align_chunks.log"):
