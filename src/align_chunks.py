@@ -179,7 +179,8 @@ def _extract_file_chunk_info(filepath, top_directory, file_index, exclude_variab
 
     try:
         ds = xr.open_dataset(filepath, decode_times=False, chunks={})
-        for var_name in ds.data_vars:
+        # use .variables to include both data variables and coordinates (some files may have different chunking for coords)
+        for var_name in ds.variables:
             if var_name in exclude_variables:
                 continue
             var = ds[var_name]
@@ -539,7 +540,8 @@ def _rechunk_single_file(file_job):
             target_chunks = op['target_chunks']
             if isinstance(target_chunks, list):
                 target_chunks = tuple(target_chunks)
-            if var_name in ds.data_vars:
+            # use .variables to include both data variables and coordinates (some files may have different chunking for coords)
+            if var_name in ds.variables:
                 enc = _normalize_encoding_for_netcdf(op['target_encoding'])
                 chunksizes = enc.get('chunksizes')
                 if chunksizes is not None:
