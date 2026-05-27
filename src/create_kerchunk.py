@@ -15,6 +15,9 @@ Test command:
     python create_kerchunk.py --action combine --directory /gdex/data/d640000/bnd_ocean/194907 --output_directory /glade/u/home/chiaweih/Kerchunk_experiments/test_json --extensions nc --filename combined_kerchunk.json --dry_run
     python create_kerchunk.py --action combine --directory /gdex/data/d640000/bnd_ocean/194907 --output_directory /glade/u/home/chiaweih/Kerchunk_experiments/test_json --extensions nc --filename combined_kerchunk.json 
     python create_kerchunk.py --action combine --directory /glade/campaign/collections/gdex/data/d640000/bnd_ocean/194907 --output_directory /glade/u/home/chiaweih/Kerchunk_experiments/test_json --extensions nc --filename bnd_ocean.194907.parq --output_format parquet --make_remote
+
+    python create_kerchunk.py --action combine --concat_ensemble --directory /glade/campaign/collections/gdex/data/d651039/canesm5_lens/OImon/siconc/  --output_directory ~/scratch/MMLEA_test 
+         --regex "_ssp370_"   --cluster single        
     
 """
 
@@ -29,11 +32,14 @@ import argparse
 import re
 import time
 import dask
+import zarr
+import xarray as xr
 from dask_jobqueue import PBSCluster
 from dask.distributed import LocalCluster
 from fsspec.implementations.local import LocalFileSystem
 import kerchunk.hdf
 from kerchunk.combine import MultiZarrToZarr
+from kerchunk.netCDF3 import NetCDF3ToZarr
 
 ### Global settings
 
@@ -41,6 +47,7 @@ from kerchunk.combine import MultiZarrToZarr
 ALL_VARIABLES_KEYWORD = "ALL"
 PBS_LOCAL_DIR = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'temp_dask')
 PBS_LOG_DIR = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'temp_pbs')
+
 # global filesystem object
 fs = LocalFileSystem()
 # default fs.open(file, **so) arguments dictionary for writing kerchunk reference files
@@ -70,6 +77,13 @@ def _get_parser():
         nargs=None,
         metavar='<combine|sidecar>',
         help='Specify whether to create to combine references or create sidecar files.'
+    )
+    parser.add_argument(
+        '--concat_ensemble', '-ce',
+        action='store_true',
+        required=False,
+        help='Concatenate ensemble members',
+        default=[]
     )
     parser.add_argument(
         '--directory', '-d',
@@ -231,12 +245,12 @@ def get_cluster(
                 cores = 1,
                 memory = '4GiB',
                 processes = 1,
-                account = 'P43713000',
+                account = PBS_ACCOUNT,
                 local_directory = local_directory_pbs,
                 log_directory = log_directory_pbs,
                 resource_spec = 'select=1:ncpus=1:mem=4GB',
                 queue = 'gdex',
-                walltime = '24:00:00',
+                walltime = '12:00:00',
                 interface = 'ext'
             )
             cluster.scale(jobs=num_processes)
@@ -260,6 +274,7 @@ def get_cluster(
 
     if _global_client is None:
         _global_client = cluster.get_client()
+
 
 def cleanup_dask_client():
     """Cleanup global dask client."""
@@ -325,13 +340,21 @@ def gen_reference(file_url, output_format='json', write_reference=False):
         # set error to 'ignore' to skip over string decoding issues
         # check https://fsspec.github.io/kerchunk/reference.html#kerchunk.hdf.SingleHdf5ToZarr
         # for more details
-        h5chunks = kerchunk.hdf.SingleHdf5ToZarr(
-            infile,
-            file_url,
-            inline_threshold=366,
-            vlen_encode='leave',
-            error='ignore'
-        )
+        try:
+            h5chunks = kerchunk.hdf.SingleHdf5ToZarr(
+                infile,
+                file_url,
+                inline_threshold=366,
+                vlen_encode='leave',
+                error='ignore'
+            )
+        except OSError:
+            print(f"{file_url}: trying to interpret as NetCDF3")
+            h5chunks = NetCDF3ToZarr(
+                file_url,
+                inline_threshold=366,
+            )
+
         # year = file_url.split('/')[-1].split('.')[0]
         if write_reference and output_format.lower() == 'json':
             with fs.open(outfile, 'wb') as f:
@@ -346,6 +369,7 @@ def gen_reference(file_url, output_format='json', write_reference=False):
 
     return reference_struct
 
+
 def create_directories(dirs, base_path='./'):
     """Create directories in dirs list if they do not exist."""
     for i in dirs:
@@ -355,6 +379,7 @@ def create_directories(dirs, base_path='./'):
             os.mkdir(directory_path)
     return None
 
+
 def matches_extension(filename, extensions):
     """Check if filename matches one of the extensions."""
     if len(extensions) == 0:
@@ -363,6 +388,7 @@ def matches_extension(filename, extensions):
         if re.match(f'.*{j}$', filename):
             return True
     return False
+
 
 def process_kerchunk_sidecar(directory, output_directory='.', output_format='json', extensions=None, dry_run=False):
     """Traverse files in `directory` and create kerchunk sidecar files."""
@@ -412,6 +438,7 @@ def process_kerchunk_sidecar(directory, output_directory='.', output_format='jso
             # create child directories
             create_directories(child_dirs)
 
+
 def find_files(directory, regex, extensions):
     """Traverse in the directory to find files."""
     all_files = []
@@ -428,6 +455,7 @@ def find_files(directory, regex, extensions):
                 full_path = os.path.normpath(full_path)
                 all_files.append(full_path)
     return all_files
+
 
 def exclude_files(
     files: list,
@@ -457,6 +485,7 @@ def exclude_files(
         if not pattern.match(f):
             included_files.append(f)
     return included_files
+
 
 def get_time_variable(filename):
     """Get time variable name in the file
@@ -490,6 +519,7 @@ def get_time_variable(filename):
             return key
 
     return None
+
 
 def separate_vars(refs, var_names):
     """Extracts specific variables from reference files object."""
@@ -554,6 +584,7 @@ def exclude_vars(refs, exclude_var_names):
 #     multi_kerchunk = mzz.translate()
 #     write_kerchunk(output_directory, multi_kerchunk, regex, variables, output_filename, make_remote)
 
+
 def write_combined_kerchunk(output_directory, multi_kerchunk, regex=None, output_filename="",output_format="json", make_remote=False):
     """Write kerchunk .json for combined kerchunk.
 
@@ -580,7 +611,8 @@ def write_combined_kerchunk(output_directory, multi_kerchunk, regex=None, output
             output_filename = output_filename + file_extension
         output_fname = os.path.join(output_directory, output_filename)
     elif regex:
-        guessed_filename = regex.replace('*','').replace('.','').replace('$','').replace('^','').replace('[','').replace(']','')
+        guessed_filename = regex.replace('*','').replace('.','').replace('$','').replace('^','').replace('|','')
+        guessed_filename = guessed_filename.replace('[','').replace(']','').replace('(','').replace(')','')
         output_fname = os.path.join(output_directory, guessed_filename)
     else:
         output_fname =  os.path.join(output_directory, f'combined_kerchunk{file_extension}')
@@ -589,7 +621,7 @@ def write_combined_kerchunk(output_directory, multi_kerchunk, regex=None, output
     if output_format.lower() == 'json':
         with open(f"{output_fname}", "wb") as f:
             f.write(ujson.dumps(multi_kerchunk).encode())
-        
+
         print(f'Created: {output_fname}')
 
         if make_remote:
@@ -607,6 +639,19 @@ def write_combined_kerchunk(output_directory, multi_kerchunk, regex=None, output
             convert_ref_file_loc.main_parquet(multi_kerchunk, output_fname.replace(file_extension,f'-remote{file_extension}'))
 
 
+def postprocess_ensemble(ref):
+    ref_ = zarr.open(ref)
+    # Delete fields meant for individual ensemble members
+    delete_fields = ['realization_index', 'experiment_id', 'history', 'branch_time_in_parent', 'variant_label', 
+                     'further_info_url', 'tracking_id', 'original_file_names', 'original_file_hash_codes',
+                     'branch_time',
+                    ]
+    for field in delete_fields:
+        if ref_.attrs.get(field, None):
+            del ref_.attrs[field]
+    return ref
+
+
 def process_kerchunk_combine(
     directory,
     output_directory='.',
@@ -618,6 +663,7 @@ def process_kerchunk_combine(
     variables_exclude=None,
     output_filename="",
     make_remote=False,
+    concat_ensemble=False,
     output_format="json",
     use_dask=True
 ):
@@ -655,6 +701,17 @@ def process_kerchunk_combine(
     if len(files) == 0:
         print('No files to process. Exiting.')
         sys.exit(1)
+
+    # if concatenating ensemble members, extract member id from filename.
+    # Note that the "r" parameter can have a period, and the "f" parameter is optional.
+    if concat_ensemble:
+        member_searches = [re.search(r"r(\d+)(\.\d+)?i(\d+)p(\d+)(f(\d+))?", file) for file in files]
+        assert all(member_searches), "Not all ensemble IDs were found in the given files"
+        member_ids = [member.group() for member in member_searches]
+        print("Ensemble member ids: " + (", ".join(member_ids)))
+        # Assert ensemble members are nonempty and unique
+        assert all(member_ids), "List contains empty strings"
+        assert len(member_ids) == len(set(member_ids)), "List contains duplicates"
 
     time_varname = get_time_variable(files[0])
     # check if time variable name is found
@@ -711,12 +768,21 @@ def process_kerchunk_combine(
         all_refs = exclude_vars(all_refs, variables_exclude)
 
     print('combining')
-    mzz = MultiZarrToZarr(
-           all_refs,
-           concat_dims=[time_varname],
-           #coo_map='QSNOW',
-        )
-    
+    if not concat_ensemble:
+        mzz = MultiZarrToZarr(
+               all_refs,
+               concat_dims=[time_varname],
+               #coo_map='QSNOW',
+              )
+    else:
+        mzz = MultiZarrToZarr(
+               all_refs,
+               coo_map={'realization': member_ids},
+               concat_dims=['realization'],
+               identical_dims=['lat', 'lon', 'time_bnds'],
+               postprocess=postprocess_ensemble,
+              )
+
     print('create aggregated reference')
     multi_kerchunk = mzz.translate()
 
@@ -737,7 +803,6 @@ def main():
     print(sys.argv)
     if len(sys.argv) == 1:
         parser.print_help()
-        
         sys.exit(1)
     args = parser.parse_args()
     print(args)
@@ -773,12 +838,14 @@ def main():
             regex_exclude=args.regex_exclude,
             output_filename=args.filename,
             make_remote=args.make_remote,
+            concat_ensemble=args.concat_ensemble,
             output_format=args.output_format[0],
             use_dask=args.cluster[0].lower() != 'serial'
         )
     else:
         print(f'action type "{args.action}" not recognized')
         sys.exit(1)
+
 
 if __name__ == '__main__':
     try:

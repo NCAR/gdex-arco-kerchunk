@@ -135,11 +135,11 @@ def create_dask_client(args):
         cores=1,
         memory='4GiB',
         processes=1,
-        account='P43713000',
+        account='STDD0003',
         local_directory=PBS_LOCAL_DIR,
         log_directory=PBS_LOG_DIR,
         resource_spec='select=1:ncpus=1:mem=4GB',
-        queue='gdex',
+        queue='casper',
         walltime=args.walltime,
         interface='ext',
     )
