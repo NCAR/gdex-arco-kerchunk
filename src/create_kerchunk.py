@@ -33,7 +33,8 @@ import re
 import time
 import dask
 import zarr
-import xarray as xr
+import h5py
+#import xarray as xr
 from dask_jobqueue import PBSCluster
 from dask.distributed import LocalCluster
 from fsspec.implementations.local import LocalFileSystem
@@ -286,7 +287,7 @@ def cleanup_dask_client():
 
 def gen_reference(file_url, output_format='json', write_reference=False):
     """Generate kerchunk json structure for a single file.
-    
+
     Parameters
     -----------
     file_url : str
@@ -294,8 +295,8 @@ def gen_reference(file_url, output_format='json', write_reference=False):
     output_format : str
         output format for the generated kerchunk structure.
         Default is 'json'. If 'parquet' is specified, the output will be in parquet format.
- 
-    
+
+
     write_json : bool
         whether to write the json structure to a sidecar file.
         Default is False and returns the json structure without writing to file.
@@ -334,21 +335,23 @@ def gen_reference(file_url, output_format='json', write_reference=False):
             reference_struct = ujson.loads(f.read().decode())
         return reference_struct
 
+    is_hdf5 = h5py.is_hdf5(file_url)
+
     # build json structure if not exists
     with fs.open(file_url, **so) as infile:
         # set vlen_encode to 'leave' to avoid issues with string variable (d640000)
         # set error to 'ignore' to skip over string decoding issues
         # check https://fsspec.github.io/kerchunk/reference.html#kerchunk.hdf.SingleHdf5ToZarr
         # for more details
-        try:
+        if is_hdf5:
             h5chunks = kerchunk.hdf.SingleHdf5ToZarr(
                 infile,
                 file_url,
                 inline_threshold=366,
-                vlen_encode='leave',
-                error='ignore'
+                vlen_encode='embed',
+                error='warn'
             )
-        except OSError:
+        else:
             print(f"{file_url}: trying to interpret as NetCDF3")
             h5chunks = NetCDF3ToZarr(
                 file_url,
@@ -641,10 +644,12 @@ def write_combined_kerchunk(output_directory, multi_kerchunk, regex=None, output
 
 def postprocess_ensemble(ref):
     ref_ = zarr.open(ref)
-    # Delete fields meant for individual ensemble members
-    delete_fields = ['realization_index', 'experiment_id', 'history', 'branch_time_in_parent', 'variant_label', 
+    # Delete metadata fields meant for individual ensemble members
+    delete_fields = ['realization_index', 'realization', 'experiment_id', 'experiment', 'history', 'variant_label', 
                      'further_info_url', 'tracking_id', 'original_file_names', 'original_file_hash_codes',
-                     'branch_time',
+                     'branch_time', 'parent_time_units', 'parent_variant_label', 'parent_experiment_rip', 
+                     'physics_index', 'forcing_index', 'initialization_index', 'branch_time_in_parent',
+                     'branch_time_in_child', 
                     ]
     for field in delete_fields:
         if ref_.attrs.get(field, None):
@@ -779,8 +784,8 @@ def process_kerchunk_combine(
                all_refs,
                coo_map={'realization': member_ids},
                concat_dims=['realization'],
-               identical_dims=['lat', 'lon', 'time_bnds'],
-               postprocess=postprocess_ensemble,
+               identical_dims=['lat', 'lon', 'time_bnds', 'bnds'],
+               #postprocess=postprocess_ensemble,
               )
 
     print('create aggregated reference')
