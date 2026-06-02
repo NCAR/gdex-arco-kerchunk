@@ -1,0 +1,6 @@
+cesm1_lens/Aday/Rx1day
+cesm1_lens/Amon/pr
+ukesm1-0-ll_lens/OImon/siconc
+mpi_lens_cmip6/Omon/mlotst
+e3sm_v2_lens/Amon/tauu
+access_lens/Amon/evspsbl
