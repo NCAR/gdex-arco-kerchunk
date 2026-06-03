@@ -134,11 +134,12 @@ def _get_parser():
         default="local",
         required=False,
         nargs=1,
-        metavar='< PBS / single / local >',
+        metavar='< PBS / single / local / serial >',
         help="""Choose type of dask cluster to use.
         PBS - PBSCluster (defaults to 5 workers)
         single - singleThreaded
         local - localCluster (uses os.ncpus)
+        serial - no dask, process files one at a time
         """
     )
     parser.add_argument(
@@ -259,6 +260,8 @@ def get_cluster(
                 from dask_kubernetes.operator import KubeCluster
             cluster = KubeCluster()
             cluster.scale(jobs=num_processes)
+        case 'serial':
+            return  # no cluster needed for serial processing
         case 'local':
             cluster = LocalCluster()
         case _: # default use localCluster
@@ -656,7 +659,8 @@ def process_kerchunk_combine(
     variables_exclude=None,
     output_filename="",
     make_remote=False,
-    output_format="json"
+    output_format="json",
+    use_dask=True
 ):
     """Traverse files in `directory` and create kerchunk aggregated files."""
 
@@ -707,27 +711,33 @@ def process_kerchunk_combine(
         sys.exit(1)
 
     all_refs = []
-    print('generating references with dask delayed (dask jobqueue to compute node)')
-    for f in files:
-        lazy_result = dask.delayed(gen_reference)(f, output_format=output_format, write_reference=False)
-        lazy_results.append(lazy_result)
-        # Split up large jobs
-        if len(lazy_results) > 5000:
-            start = time.time()
-            print(f'Intermediate processing ({len(all_refs)}/{len(files)})')
-            tmp_refs = dask.compute(*lazy_results)
-            all_refs.extend(tmp_refs)
-            lazy_results = []
-            end = time.time()
-            print(f'Done intermediate. Elapsed time ({end-start} seconds)')
-            print('dask computed partial (partial data in client memory)')
+    if use_dask:
+        print('generating references with dask delayed (dask jobqueue to compute node)')
+        for f in files:
+            lazy_result = dask.delayed(gen_reference)(f, output_format=output_format, write_reference=False)
+            lazy_results.append(lazy_result)
+            # Split up large jobs
+            if len(lazy_results) > 5000:
+                start = time.time()
+                print(f'Intermediate processing ({len(all_refs)}/{len(files)})')
+                tmp_refs = dask.compute(*lazy_results)
+                all_refs.extend(tmp_refs)
+                lazy_results = []
+                end = time.time()
+                print(f'Done intermediate. Elapsed time ({end-start} seconds)')
+                print('dask computed partial (partial data in client memory)')
+                memory_gb = process.memory_info().rss / 1e9
+                print(f'Client process memory usage (GB): {memory_gb:.2f}')
+
+        all_refs.extend(dask.compute(*lazy_results))
+        print('dask computed (all data in client memory)')
+    else:
+        print('generating references serially')
+        for i, f in enumerate(files):
+            print(f'Processing ({i+1}/{len(files)}): {f}')
+            all_refs.append(gen_reference(f, output_format=output_format, write_reference=False))
             memory_gb = process.memory_info().rss / 1e9
             print(f'Client process memory usage (GB): {memory_gb:.2f}')
-
-    all_refs.extend(dask.compute(*lazy_results))
-
-    # After compute(), data is in client process memory (not on workers anymore)]
-    print('dask computed (all data in client memory)')
     memory_gb = process.memory_info().rss / 1e9
     print(f'Client process memory usage (GB): {memory_gb:.2f}')
     print('Total memory used for references (GB): ', sum([sys.getsizeof(r)/1e9 for r in all_refs]))
@@ -817,7 +827,8 @@ def main():
             regex_exclude=args.regex_exclude,
             output_filename=args.filename,
             make_remote=args.make_remote,
-            output_format=args.output_format[0]
+            output_format=args.output_format[0],
+            use_dask=args.cluster[0].lower() != 'serial'
         )
     else:
         print(f'action type "{args.action}" not recognized')
