@@ -246,7 +246,7 @@ def get_cluster(
                 cores = 1,
                 memory = '4GiB',
                 processes = 1,
-                account = PBS_ACCOUNT,
+                account = 'P43713000',
                 local_directory = local_directory_pbs,
                 log_directory = log_directory_pbs,
                 resource_spec = 'select=1:ncpus=1:mem=4GB',
@@ -348,8 +348,8 @@ def gen_reference(file_url, output_format='json', write_reference=False):
                 infile,
                 file_url,
                 inline_threshold=366,
-                vlen_encode='embed',
-                error='warn'
+                vlen_encode='leave',
+                error='ignore'
             )
         else:
             print(f"{file_url}: trying to interpret as NetCDF3")
@@ -784,8 +784,8 @@ def process_kerchunk_combine(
                all_refs,
                coo_map={'realization': member_ids},
                concat_dims=['realization'],
-               identical_dims=['lat', 'lon', 'time_bnds', 'bnds'],
-               #postprocess=postprocess_ensemble,
+               identical_dims=['lat', 'lon', 'time', 'time_bnds', 'bnds'],
+               postprocess=postprocess_ensemble,
               )
 
     print('create aggregated reference')
