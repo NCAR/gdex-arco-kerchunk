@@ -9,9 +9,11 @@ Parquet reference files is supported for combine action.
 
 Usage:
     python create_kerchunk.py --action <combine|sidecar> --directory <data directory> [options]
+    python create_kerchunk.py --action sidecar --file <single file> [options]
 
 Test command:
     python create_kerchunk.py --action sidecar --directory /path/to/data --output_directory /path/to/output
+    python create_kerchunk.py --action sidecar --file /path/to/data/file.nc --output_directory /path/to/output
     python create_kerchunk.py --action combine --directory /gdex/data/d640000/bnd_ocean/194907 --output_directory /glade/u/home/chiaweih/Kerchunk_experiments/test_json --extensions nc --filename combined_kerchunk.json --dry_run
     python create_kerchunk.py --action combine --directory /gdex/data/d640000/bnd_ocean/194907 --output_directory /glade/u/home/chiaweih/Kerchunk_experiments/test_json --extensions nc --filename combined_kerchunk.json 
     python create_kerchunk.py --action combine --directory /glade/campaign/collections/gdex/data/d640000/bnd_ocean/194907 --output_directory /glade/u/home/chiaweih/Kerchunk_experiments/test_json --extensions nc --filename bnd_ocean.194907.parq --output_format parquet --make_remote
@@ -71,13 +73,20 @@ def _get_parser():
         metavar='<combine|sidecar>',
         help='Specify whether to create to combine references or create sidecar files.'
     )
-    parser.add_argument(
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument(
         '--directory', '-d',
         type=str,
         nargs=None,
         metavar='<directory>',
-        required=True,
         help="Directory to scan and create kerchunk reference files."
+    )
+    input_group.add_argument(
+        '--file', '-fi',
+        type=str,
+        nargs=None,
+        metavar='<file>',
+        help="Single file to generate a kerchunk reference for."
     )
     parser.add_argument(
         '--output_directory', '-o',
@@ -309,8 +318,8 @@ def gen_reference(file_url, output_format='json', write_reference=False):
     print(f'generating {file_basename} references')
 
     # skip build and just load and return existing json structure
-    # TODO: check read construct validity
-    if os.path.exists(outfile):
+    # Only cache-hit for JSON sidecars: parquet is binary and cannot be read back with ujson.
+    if output_format.lower() == 'json' and os.path.exists(outfile):
         print(f'{outfile} exists, skipping')
         with fs.open(outfile, 'rb') as f:
             reference_struct = ujson.loads(f.read().decode())
@@ -551,6 +560,34 @@ def exclude_vars(refs, exclude_var_names):
 #     multi_kerchunk = mzz.translate()
 #     write_kerchunk(output_directory, multi_kerchunk, regex, variables, output_filename, make_remote)
 
+
+def calculate_parquet_record_size(refs_dict, min_size=10_000):
+    """Calculate record_size for refs_to_dataframe based on total ref count.
+
+    Targets `target_partitions` output parquet files. Floors at `min_size`
+    so small datasets don't produce tiny, inefficient partitions.
+
+    Parameters
+    ----------
+    refs_dict : dict
+        Combined kerchunk reference dict (output of MultiZarrToZarr.translate()).
+    target_partitions : int
+        Desired number of output parquet partition files.
+    min_size : int
+        Minimum record_size regardless of ref count.
+
+    Returns
+    -------
+    int
+        record_size to pass to refs_to_dataframe.
+    """
+    inner = refs_dict.get('refs', refs_dict)
+    num_refs = len(inner)
+    if num_refs == 0:
+        return min_size
+    return max(min_size, num_refs)
+
+
 def write_combined_kerchunk(output_directory, multi_kerchunk, regex=None, output_filename="",output_format="json", make_remote=False):
     """Write kerchunk .json for combined kerchunk.
 
@@ -595,8 +632,12 @@ def write_combined_kerchunk(output_directory, multi_kerchunk, regex=None, output
 
     elif output_format.lower() == 'parquet':
         from kerchunk import df
-        df.refs_to_dataframe(multi_kerchunk, output_fname)
-
+        # MultiZarrToZarr uses template compression (e.g. {{u0}}) to deduplicate paths.
+        # refs_to_dataframe does not expand templates, so paths become None in parquet.
+        # Expand templates here before writing.
+        record_size = calculate_parquet_record_size(multi_kerchunk)
+        print(f'Parquet record_size: {record_size} (refs: {len(multi_kerchunk.get("refs", multi_kerchunk))})')
+        df.refs_to_dataframe(multi_kerchunk, output_fname, record_size=record_size, categorical_threshold=record_size)
         print(f'Created: {output_fname}')
 
         if make_remote:
@@ -741,13 +782,26 @@ def main():
     )
 
     if args.action == 'sidecar':
-        process_kerchunk_sidecar(
-            args.directory,
-            args.output_directory,
-            extensions=args.extensions,
-            dry_run=args.dry_run
-        )
+        if args.file:
+            if not os.path.isfile(args.file):
+                print(f'File "{args.file}" cannot be found')
+                sys.exit(1)
+            os.chdir(args.output_directory)
+            if not args.dry_run:
+                gen_reference(args.file, output_format='json', write_reference=True)
+            else:
+                print(f'dry run: would process {args.file}')
+        else:
+            process_kerchunk_sidecar(
+                args.directory,
+                args.output_directory,
+                extensions=args.extensions,
+                dry_run=args.dry_run
+            )
     elif args.action == 'combine':
+        if args.file:
+            print('--file is not supported for combine action; use --directory')
+            sys.exit(1)
         if args.exclude_variables == []:
             exc_variables = None
         else:
