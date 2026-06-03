@@ -36,7 +36,6 @@ import time
 import dask
 import zarr
 import h5py
-#import xarray as xr
 from dask_jobqueue import PBSCluster
 from dask.distributed import LocalCluster
 from fsspec.implementations.local import LocalFileSystem
@@ -260,7 +259,7 @@ def get_cluster(
                 log_directory = log_directory_pbs,
                 resource_spec = 'select=1:ncpus=1:mem=4GB',
                 queue = 'gdex',
-                walltime = '12:00:00',
+                walltime = '24:00:00',
                 interface = 'ext'
             )
             cluster.scale(jobs=num_processes)
