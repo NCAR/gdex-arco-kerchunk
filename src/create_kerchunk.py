@@ -17,9 +17,7 @@ Test command:
     python create_kerchunk.py --action combine --directory /gdex/data/d640000/bnd_ocean/194907 --output_directory /glade/u/home/chiaweih/Kerchunk_experiments/test_json --extensions nc --filename combined_kerchunk.json --dry_run
     python create_kerchunk.py --action combine --directory /gdex/data/d640000/bnd_ocean/194907 --output_directory /glade/u/home/chiaweih/Kerchunk_experiments/test_json --extensions nc --filename combined_kerchunk.json 
     python create_kerchunk.py --action combine --directory /glade/campaign/collections/gdex/data/d640000/bnd_ocean/194907 --output_directory /glade/u/home/chiaweih/Kerchunk_experiments/test_json --extensions nc --filename bnd_ocean.194907.parq --output_format parquet --make_remote
-
-    python create_kerchunk.py --action combine --concat_ensemble --directory /glade/campaign/collections/gdex/data/d651039/canesm5_lens/OImon/siconc/  --output_directory ~/scratch/MMLEA_test 
-         --regex "_ssp370_"   --cluster single        
+    python create_kerchunk.py --action combine --concat_ensemble --directory /glade/campaign/collections/gdex/data/d651039/ukesm1-0-ll_lens/OImon/siconc  --filename ukesm1-0-ll-lens_OImon_siconc_historical.json  --output_directory ~/scratch/MMLEA_test --regex "_ssp370_"   --cluster single        
     
 """
 
@@ -884,6 +882,11 @@ def main():
             exc_variables = None
         else:
             exc_variables = args.exclude_variables
+        if args.filename: 
+            target_file = os.path.join(args.output_directory, args.filename)
+            if os.path.exists(target_file):
+                print(f'\n{target_file} exists, skipping.\n')
+                sys.exit(0)
         process_kerchunk_combine(
             args.directory,
             args.output_directory,

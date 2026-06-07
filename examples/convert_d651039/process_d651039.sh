@@ -10,8 +10,8 @@ OUTPUT_DIR="/glade/u/home/bonnland/scratch/MMLEA_d651039"
 DRY_RUN=""             # dry_run = FALSE
 
 # Not all directories contain ensemble data, so we process a subset of directories.
-#PROCESS_DIRS="./dirs_ensemble.txt"
-PROCESS_DIRS="./dirs_test.txt"
+PROCESS_DIRS="./dirs_ensemble.txt"
+#PROCESS_DIRS="./dirs_test.txt"
 for dir in `cat $PROCESS_DIRS`; do
     MODEL=`echo ${dir} | cut -d'/' -f 1`
     VAR_TYPE=`echo ${dir} | cut -d'/' -f 2`
@@ -19,7 +19,7 @@ for dir in `cat $PROCESS_DIRS`; do
 
     # Replace underscores with dashes in model name
     MODEL="${MODEL//_/-}"
-    OUTFILE_PREFIX="${MODEL}_${VAR_TYPE}_${VAR}"
+    OUTFILE_PREFIX="${VAR}_${VAR_TYPE}_${MODEL}"
     
     INPUT_DIR="/glade/campaign/collections/gdex/data/d651039/${dir}"
 

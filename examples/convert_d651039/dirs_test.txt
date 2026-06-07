@@ -19,4 +19,14 @@ access_lens/Amon/evspsbl
 ipsl_cm6a_lens/Aday/TNn
 ipsl_cm6a_lens/Amon/zg500
 giss-e2/Omon/mlotst
-giss-e2/Amon/tauv
+giss-e2/Amon/tauvgfdl_spear_lens/Aday/TXx
+gfdl_spear_lens/Amon/psl
+gfdl_cm3_lens/Omon/mlotst
+gfdl_esm2m_lens/Aday/TNn
+e3sm_v1_lens/Aday/TXx/old
+e3sm_v1_lens/Amon/tauv
+e3sm_v1_lens/Aday/TNn
+miroc_esm2l_lens/Omon/zos
+miroc_esm2l_lens/Amon/zg500
+mpi_lens/Omon/tos
+mpi_lens/Amon/tauv
