@@ -693,6 +693,17 @@ def postprocess_ensemble(ref):
             del ref_.attrs[field]
     return ref
 
+def print_duplicates(_list):
+    seen = set()
+    duplicates = set()
+
+    for item in _list:
+        if item in seen:
+            duplicates.add(item)
+        else:
+            seen.add(item)
+    
+    print(list(duplicates))
 
 def process_kerchunk_combine(
     directory,
@@ -744,15 +755,21 @@ def process_kerchunk_combine(
         print('No files to process. Exiting.')
         sys.exit(1)
 
-    # if concatenating ensemble members, extract member id from filename.
-    # Note that the "r" parameter can have a period, and the "f" parameter is optional.
+    # If concatenating ensemble members, extract member id from filename.
+    # Note that the "f" parameter is missing in some files.
     if concat_ensemble:
-        member_searches = [re.search(r"r(\d+)(\.\d+)?i(\d+)p(\d+)(f(\d+))?", file) for file in files]
+        # This should be the standard expression for CMIP data: 
+        #member_searches = [re.search(r"r(\d+)i(\d+)p(\d+)(f(\d+))?", file) for file in files]
+        # Annoying exceptions:  CESM2 LENS data have an optional "r" parameter and can have float values for first parameter.  
+        member_searches = [re.search(r"r?(\d+)(\.\d+)?i(\d+)p(\d+)(f(\d+))?", file) for file in files]
+
         assert all(member_searches), "Not all ensemble IDs were found in the given files"
         member_ids = [member.group() for member in member_searches]
         print("Ensemble member ids: " + (", ".join(member_ids)))
         # Assert ensemble members are nonempty and unique
         assert all(member_ids), "List contains empty strings"
+        if len(member_ids) != len(set(member_ids)):
+            print_duplicates(member_ids)
         assert len(member_ids) == len(set(member_ids)), "List contains duplicates"
 
     time_varname = get_time_variable(files[0])
@@ -821,7 +838,7 @@ def process_kerchunk_combine(
                all_refs,
                coo_map={'realization': member_ids},
                concat_dims=['realization'],
-               identical_dims=['lat', 'lon', 'time', 'time_bnds', 'bnds'],
+               identical_dims=['lat', 'lon', 'time', 'time_bnds', 'bnds', 'height'],
                postprocess=postprocess_ensemble,
               )
 
