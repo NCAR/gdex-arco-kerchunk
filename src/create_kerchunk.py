@@ -679,32 +679,6 @@ def write_combined_kerchunk(output_directory, multi_kerchunk, regex=None, output
             convert_ref_file_loc.main_parquet(multi_kerchunk, output_fname.replace(file_extension,f'-remote{file_extension}'))
 
 
-def postprocess_ensemble(ref):
-    ref_ = zarr.open(ref)
-    # Delete metadata fields meant for individual ensemble members
-    delete_fields = ['realization_index', 'realization', 'experiment_id', 'experiment', 'history', 'variant_label', 
-                     'further_info_url', 'tracking_id', 'original_file_names', 'original_file_hash_codes',
-                     'branch_time', 'parent_time_units', 'parent_variant_label', 'parent_experiment_rip', 
-                     'physics_index', 'forcing_index', 'initialization_index', 'branch_time_in_parent',
-                     'branch_time_in_child', 
-                    ]
-    for field in delete_fields:
-        if ref_.attrs.get(field, None):
-            del ref_.attrs[field]
-    return ref
-
-def print_duplicates(_list):
-    seen = set()
-    duplicates = set()
-
-    for item in _list:
-        if item in seen:
-            duplicates.add(item)
-        else:
-            seen.add(item)
-    
-    print(list(duplicates))
-
 def process_kerchunk_combine(
     directory,
     output_directory='.',
@@ -768,8 +742,6 @@ def process_kerchunk_combine(
         print("Ensemble member ids: " + (", ".join(member_ids)))
         # Assert ensemble members are nonempty and unique
         assert all(member_ids), "List contains empty strings"
-        if len(member_ids) != len(set(member_ids)):
-            print_duplicates(member_ids)
         assert len(member_ids) == len(set(member_ids)), "List contains duplicates"
 
     time_varname = get_time_variable(files[0])
@@ -839,7 +811,6 @@ def process_kerchunk_combine(
                coo_map={'realization': member_ids},
                concat_dims=['realization'],
                identical_dims=['lat', 'lon', 'time', 'time_bnds', 'bnds', 'height'],
-               postprocess=postprocess_ensemble,
               )
 
     print('create aggregated reference')
