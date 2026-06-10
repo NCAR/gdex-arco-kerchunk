@@ -899,11 +899,7 @@ def main():
             exc_variables = None
         else:
             exc_variables = args.exclude_variables
-        if args.filename: 
-            target_file = os.path.join(args.output_directory, args.filename)
-            if os.path.exists(target_file):
-                print(f'\n{target_file} exists, skipping.\n')
-                sys.exit(0)
+
         process_kerchunk_combine(
             args.directory,
             args.output_directory,
