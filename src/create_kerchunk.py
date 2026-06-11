@@ -648,7 +648,7 @@ def write_combined_kerchunk(output_directory, multi_kerchunk, regex=None, output
         record_size = calculate_parquet_record_size(multi_kerchunk)
         print(f'Parquet record_size: {record_size} (refs: {len(multi_kerchunk.get("refs", multi_kerchunk))})')
         if parquet_path_no_cat :
-            df.refs_to_dataframe(multi_kerchunk, output_fname, record_size=record_size, categorical_threshold=record_size)
+            df.refs_to_dataframe(multi_kerchunk, output_fname, categorical_threshold=record_size)
         else :
             df.refs_to_dataframe(multi_kerchunk, output_fname)
         print(f'Created: {output_fname}')
@@ -656,7 +656,7 @@ def write_combined_kerchunk(output_directory, multi_kerchunk, regex=None, output
         if make_remote:
             import convert_ref_file_loc
             if parquet_path_no_cat :
-                convert_ref_file_loc.main_parquet(multi_kerchunk, output_fname.replace(file_extension,f'-remote{file_extension}'), record_size=record_size, categorical_threshold=record_size)
+                convert_ref_file_loc.main_parquet(multi_kerchunk, output_fname.replace(file_extension,f'-remote{file_extension}'), categorical_threshold=record_size)
             else :
                 convert_ref_file_loc.main_parquet(multi_kerchunk, output_fname.replace(file_extension,f'-remote{file_extension}'))
 
