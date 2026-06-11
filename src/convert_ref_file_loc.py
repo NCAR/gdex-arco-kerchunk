@@ -57,7 +57,7 @@ def main(filename, outfile):
     print(f'Created: {out_filename}')
     print(f'Created: {osdf_filename}')
 
-def main_parquet(dict_reference, outfile):
+def main_parquet(dict_reference, outfile, categorical_threshold=None):
     """ Convert local file path to remote https file path in reference dictionary
     There are two remote paths:
     1. https://data.gdex.ucar.edu
@@ -104,8 +104,12 @@ def main_parquet(dict_reference, outfile):
     out_filename_osdf = base_name + '-osdf.parq'
 
     # Write the modified dataframes to parquet files
-    df.refs_to_dataframe(dict_reference_https, out_filename_https)
-    df.refs_to_dataframe(dict_reference_osdf, out_filename_osdf)
+    if categorical_threshold is not None:
+        df.refs_to_dataframe(dict_reference_https, out_filename_https, categorical_threshold=categorical_threshold)
+        df.refs_to_dataframe(dict_reference_osdf, out_filename_osdf, categorical_threshold=categorical_threshold)
+    else:
+        df.refs_to_dataframe(dict_reference_https, out_filename_https)
+        df.refs_to_dataframe(dict_reference_osdf, out_filename_osdf)
 
     print(f'Created: {out_filename_https}')
     print(f'Created: {out_filename_osdf}')
