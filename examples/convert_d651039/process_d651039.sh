@@ -6,8 +6,8 @@
 # Where create_kerchunk.py is located
 SRC_DIR="/glade/u/home/bonnland/GitRepos/gdex-arco-kerchunk/src"
 
-OUTPUT_DIR="/glade/u/home/bonnland/scratch/MMLEA_d651039"
-#OUTPUT_DIR="/glade/u/home/bonnland/scratch/TEMP_DATA"
+#OUTPUT_DIR="/glade/u/home/bonnland/scratch/MMLEA_d651039"
+OUTPUT_DIR="/glade/u/home/bonnland/scratch/TEMP_DATA"
 
 # Whether to actually create kerchunk references or not
 #DRY_RUN=" --dry_run "  # dry_run = TRUE
@@ -33,7 +33,7 @@ for dir in `cat $PROCESS_DIRS`; do
     #CLUSTER="--cluster pbs"
     #CLUSTER="--cluster local"
     CLUSTER="--cluster single"
-    STANDARD_OPTIONS="$DRY_RUN --action combine --concat_ensemble --output_format json $CLUSTER --directory $INPUT_DIR --output_directory $OUTPUT_DIR"
+    STANDARD_OPTIONS="$DRY_RUN --action combine --concat_new_dim ensemble --output_format json $CLUSTER --directory $INPUT_DIR --output_directory $OUTPUT_DIR"
 
 
     # Include/exclude patterns match specific scenarios (historical, ssp585, historical_ssp585, etc.)

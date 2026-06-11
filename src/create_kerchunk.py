@@ -17,7 +17,7 @@ Test command:
     python create_kerchunk.py --action combine --directory /gdex/data/d640000/bnd_ocean/194907 --output_directory /glade/u/home/chiaweih/Kerchunk_experiments/test_json --extensions nc --filename combined_kerchunk.json --dry_run
     python create_kerchunk.py --action combine --directory /gdex/data/d640000/bnd_ocean/194907 --output_directory /glade/u/home/chiaweih/Kerchunk_experiments/test_json --extensions nc --filename combined_kerchunk.json 
     python create_kerchunk.py --action combine --directory /glade/campaign/collections/gdex/data/d640000/bnd_ocean/194907 --output_directory /glade/u/home/chiaweih/Kerchunk_experiments/test_json --extensions nc --filename bnd_ocean.194907.parq --output_format parquet --make_remote
-    python create_kerchunk.py --action combine --concat_ensemble --directory /glade/campaign/collections/gdex/data/d651039/ukesm1-0-ll_lens/OImon/siconc  --filename ukesm1-0-ll-lens_OImon_siconc_historical.json  --output_directory ~/scratch/MMLEA_test --regex "_ssp370_"   --cluster single        
+    python create_kerchunk.py --action combine --concat_new_dim ensemble --directory /glade/campaign/collections/gdex/data/d651039/ukesm1-0-ll_lens/OImon/siconc  --filename ukesm1-0-ll-lens_OImon_siconc_historical.json  --output_directory ~/scratch/MMLEA_test --regex "_ssp370_"   --cluster single        
     
 """
 
@@ -32,7 +32,6 @@ import argparse
 import re
 import time
 import dask
-import zarr
 import h5py
 from dask_jobqueue import PBSCluster
 from dask.distributed import LocalCluster
@@ -40,6 +39,8 @@ from fsspec.implementations.local import LocalFileSystem
 import kerchunk.hdf
 from kerchunk.combine import MultiZarrToZarr
 from kerchunk.netCDF3 import NetCDF3ToZarr
+
+import concat_dim
 
 ### Global settings
 
@@ -79,11 +80,13 @@ def _get_parser():
         help='Specify whether to create to combine references or create sidecar files.'
     )
     parser.add_argument(
-        '--concat_ensemble', '-ce',
-        action='store_true',
+        '--concat_new_dim',
+        type=str,
         required=False,
-        help='Concatenate ensemble members',
-        default=[]
+        choices=['ensemble',],
+        nargs=None,
+        metavar='<ensemble>',
+        help='Specify type of new dimension to create in concatenation'
     )
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument(
@@ -690,7 +693,7 @@ def process_kerchunk_combine(
     variables_exclude=None,
     output_filename="",
     make_remote=False,
-    concat_ensemble=False,
+    concat_new_dim=None,
     output_format="json",
     use_dask=True
 ):
@@ -730,19 +733,8 @@ def process_kerchunk_combine(
         sys.exit(1)
 
     # If concatenating ensemble members, extract member id from filename.
-    # Note that the "f" parameter is missing in some files.
-    if concat_ensemble:
-        # This should be the standard expression for CMIP data: 
-        #member_searches = [re.search(r"r(\d+)i(\d+)p(\d+)(f(\d+))?", file) for file in files]
-        # Annoying exceptions:  CESM2 LENS data have an optional "r" parameter and can have float values for first parameter.  
-        member_searches = [re.search(r"r?(\d+)(\.\d+)?i(\d+)p(\d+)(f(\d+))?", file) for file in files]
-
-        assert all(member_searches), "Not all ensemble IDs were found in the given files"
-        member_ids = [member.group() for member in member_searches]
-        print("Ensemble member ids: " + (", ".join(member_ids)))
-        # Assert ensemble members are nonempty and unique
-        assert all(member_ids), "List contains empty strings"
-        assert len(member_ids) == len(set(member_ids)), "List contains duplicates"
+    if concat_new_dim == "ensemble":
+        member_ids = concat_dim.get_ensemble(files)
 
     time_varname = get_time_variable(files[0])
     # check if time variable name is found
@@ -799,13 +791,13 @@ def process_kerchunk_combine(
         all_refs = exclude_vars(all_refs, variables_exclude)
 
     print('combining')
-    if not concat_ensemble:
+    if not concat_new_dim:
         mzz = MultiZarrToZarr(
                all_refs,
                concat_dims=[time_varname],
                #coo_map='QSNOW',
               )
-    else:
+    elif concat_new_dim == "ensemble":
         mzz = MultiZarrToZarr(
                all_refs,
                coo_map={'realization': member_ids},
@@ -882,7 +874,7 @@ def main():
             regex_exclude=args.regex_exclude,
             output_filename=args.filename,
             make_remote=args.make_remote,
-            concat_ensemble=args.concat_ensemble,
+            concat_new_dim=args.concat_new_dim,
             output_format=args.output_format[0],
             use_dask=args.cluster[0].lower() != 'serial'
         )
