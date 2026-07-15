@@ -1,0 +1,52 @@
+#!/bin/bash -l
+### Job Name
+#PBS -N batch-kerchunk-mmlea2
+### Charging account
+#PBS -A P43713000
+### Request one chunk of resources with 1 CPU and 40GB of memory
+#PBS -l select=1:ncpus=1:mem=40GB
+### Allow job to run up to 20:00:00
+#PBS -l walltime=20:00:00
+### Route the job to the gdex queue
+#PBS -q gdex
+### Join output and error streams into single file
+#PBS -j oe
+# Output PBS job info
+echo "===== PBS JOB META ====="
+#!/bin/bash
+    echo "Submit_Host: ${PBS_O_HOST}"
+    echo "JobID: ${PBS_JOBID}"
+    qstat -f "${PBS_JOBID}" | awk -F' = ' '/exec_host =/ {print $2}'
+    
+echo "========================"
+
+### Set temp to scratch
+export TMPDIR=${SCRATCH}/${USER}/temp && mkdir -p $TMPDIR
+
+# Environment Management
+module --force purge
+module load ncarenv/24.12
+module load conda
+
+conda activate gdex-kerchunk-orig
+
+time=$(date)
+echo "--------------------------------"
+echo "Current time: $time"
+echo "--------------------------------"
+echo "PBS job started"
+which python
+python --version
+echo "--------------------------------"
+
+# NOTE:  Submit this PBS job on Casper with "qsub <this_file>".  Output logfile will appear in the current directory.
+
+source ./process_d651039.sh
+
+echo; echo; echo "Processing finished.  Current time:"
+
+date
+
+exit
+
+
