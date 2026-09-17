@@ -567,6 +567,25 @@ cat /scratch/verify.log
 - **Chunk Majority Rule**: align_chunks uses most common pattern as target
 - **Directory Structure**: Preserved in all operations
 
+## Special Dataset Considerations
+
+- **Special Versions of ``create_kerchunk.py``**
+
+The [patches](patches) folder exists for hosting special versions of ``create_kerchunk.py`` that are not needed in most cases.   The extra code needed to handle these cases can be substantial.   Because merging these features into the main codebase would increase code complexity, we store these special cases in the [patches](patches) folder.
+
+- **MMLEA2 Dataset** (d651039)
+
+This dataset consists of simulation runs from many different climate models, including some that produced NetCDF3 output.   The original NETCDF3 data files were not chunked, meaning that it can take minutes to open one of the reference files containing NetCDF3 data.
+
+We may want to consider using kerchunk's ```subchunk()``` funtionality in the future to help reduce the time it takes to open reference files based on NetCDF3.  So far, this option remains unexplored.
+
+- **IMERG Monthly and Half-Hourly Datasets** (d736000 and d731000)
+
+The IMERG monthly and half-hourly datasets consist of files with HDF5 groups.   The monthly files contain all coordinate and data variables within the group "Grid".   The half-hourly files contain all variables within the group "Grid" and nested group "Grid/Intermediate".   In contrast, daily files for IMERG (**d734000**) were processed upstream to move all variables to the global level. 
+
+Because needing to handle HDF5 group data is so unusual, and so much code was added to handle HDF5 groups, it was decided that a special, standalone version of ``create_kerchunk.py`` made more sense than creating extra code bloat in the original version.  This special version of ``create_kerchunk.py`` flattens all HDF5 group data and places all variables in the global namespace.   See this README for more information:  [patches/flatten_hdf5_groups/README.md](patches/flatten_hdf5_groups/README.md).   
+
+
 ---
 
 ## GDEX Integration
