@@ -676,12 +676,13 @@ def write_combined_kerchunk(output_directory, multi_kerchunk, regex=None, output
 
     elif output_format.lower() == 'parquet':
         from kerchunk import df
-        # MultiZarrToZarr uses template compression (e.g. {{u0}}) to deduplicate paths.
-        # refs_to_dataframe does not expand templates, so paths become None in parquet.
-        # Expand templates here before writing.
-        record_size = calculate_parquet_record_size(multi_kerchunk)
-        print(f'Parquet record_size: {record_size} (refs: {len(multi_kerchunk.get("refs", multi_kerchunk))})')
+
         if parquet_path_no_cat :
+            # MultiZarrToZarr uses template compression (e.g. {{u0}}) to deduplicate paths.
+            # refs_to_dataframe does not expand templates, so paths become None in parquet.
+            # Expand templates here before writing.
+            record_size = calculate_parquet_record_size(multi_kerchunk)
+            print(f'Parquet record_size: {record_size} (refs: {len(multi_kerchunk.get("refs", multi_kerchunk))})')
             df.refs_to_dataframe(multi_kerchunk, output_fname, categorical_threshold=record_size)
         else :
             df.refs_to_dataframe(multi_kerchunk, output_fname)

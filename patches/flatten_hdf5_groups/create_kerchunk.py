@@ -253,6 +253,13 @@ def _get_parser():
         default=[]
     )
 
+    parser.add_argument(
+        '--parquet_path_no_cat',
+        action='store_true',
+        default=False,
+        help="Disable category encoding for the path column in parquet output to avoid NaN in path column.",
+    )
+
     return parser
 
 
@@ -655,7 +662,7 @@ def calculate_parquet_record_size(refs_dict, min_size=10_000):
     return max(min_size, num_refs)
 
 
-def write_combined_kerchunk(output_directory, multi_kerchunk, regex=None, output_filename="",output_format="json", make_remote=False):
+def write_combined_kerchunk(output_directory, multi_kerchunk, regex=None, output_filename="",output_format="json", make_remote=False, parquet_path_no_cat=False):
     """Write kerchunk .json for combined kerchunk.
 
     Args:
@@ -700,17 +707,24 @@ def write_combined_kerchunk(output_directory, multi_kerchunk, regex=None, output
 
     elif output_format.lower() == 'parquet':
         from kerchunk import df
-        # MultiZarrToZarr uses template compression (e.g. {{u0}}) to deduplicate paths.
-        # refs_to_dataframe does not expand templates, so paths become None in parquet.
-        # Expand templates here before writing.
-        record_size = calculate_parquet_record_size(multi_kerchunk)
-        print(f'Parquet record_size: {record_size} (refs: {len(multi_kerchunk.get("refs", multi_kerchunk))})')
-        df.refs_to_dataframe(multi_kerchunk, output_fname, record_size=record_size, categorical_threshold=record_size)
+
+        if parquet_path_no_cat :
+            # MultiZarrToZarr uses template compression (e.g. {{u0}}) to deduplicate paths.
+            # refs_to_dataframe does not expand templates, so paths become None in parquet.
+            # Expand templates here before writing.
+            record_size = calculate_parquet_record_size(multi_kerchunk)
+            print(f'Parquet record_size: {record_size} (refs: {len(multi_kerchunk.get("refs", multi_kerchunk))})')
+            df.refs_to_dataframe(multi_kerchunk, output_fname, record_size=record_size, categorical_threshold=record_size)
+        else :
+            df.refs_to_dataframe(multi_kerchunk, output_fname)
         print(f'Created: {output_fname}')
 
         if make_remote:
             import convert_ref_file_loc
-            convert_ref_file_loc.main_parquet(multi_kerchunk, output_fname.replace(file_extension,f'-remote{file_extension}'))
+            if parquet_path_no_cat :
+                convert_ref_file_loc.main_parquet(multi_kerchunk, output_fname.replace(file_extension,f'-remote{file_extension}'), categorical_threshold=record_size)
+            else :
+                convert_ref_file_loc.main_parquet(multi_kerchunk, output_fname.replace(file_extension,f'-remote{file_extension}'))
 
 
 def process_kerchunk_combine(
@@ -727,7 +741,8 @@ def process_kerchunk_combine(
     concat_new_dim=None,
     h5_coord_group=None,
     output_format="json",
-    use_dask=True
+    use_dask=True,
+    parquet_path_no_cat=False
 ):
     """Traverse files in `directory` and create kerchunk aggregated files."""
 
@@ -861,7 +876,8 @@ def process_kerchunk_combine(
         regex,
         output_filename,
         output_format,
-        make_remote
+        make_remote,
+        parquet_path_no_cat
     )
 
 
@@ -923,7 +939,8 @@ def main():
             concat_new_dim=args.concat_new_dim,
             h5_coord_group=args.h5_coord_group,
             output_format=args.output_format[0],
-            use_dask=args.cluster[0].lower() != 'serial'
+            use_dask=args.cluster[0].lower() != 'serial',
+            parquet_path_no_cat=args.parquet_path_no_cat
         )
     else:
         print(f'action type "{args.action}" not recognized')
