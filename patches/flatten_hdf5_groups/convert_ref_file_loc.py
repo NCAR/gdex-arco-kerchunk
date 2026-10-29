@@ -36,7 +36,10 @@ def main(filename, outfile):
         for l in fh:
             # Find local file path pattern and replace with remote https path
             # Note: change to new GDEX path
-            match = '\\/glade\\/campaign\\/collections\\/gdex\\/data'
+            # Accept both /glade/campaign/collections/gdex/data and /gdex/data:
+            # normalize the long path to the short one, then replace the short one
+            match_long = '\\/glade\\/campaign\\/collections\\/gdex\\/data'
+            match = '\\/gdex\\/data'
             replacement = 'https:\\/\\/data.gdex.ucar.edu'
             # replacement_osdf = 'https:\\/\\/osdf-director.osg-htc.org\\/ncar\\/gdex'
             replacement_osdf = 'osdf:\\/\\/\\/ncar\\/gdex'
@@ -46,6 +49,7 @@ def main(filename, outfile):
             # replacement_osdf = 'https:\\/\\/osdf-director.osg-htc.org\\/ncar\\/rda'
 
             # replace local reference to remote reference  
+            l = l.replace(match_long, match)
             str_output =  l.replace(match, replacement)
             str_output_osdf =  l.replace(match, replacement_osdf)
 
@@ -57,7 +61,7 @@ def main(filename, outfile):
     print(f'Created: {out_filename}')
     print(f'Created: {osdf_filename}')
 
-def main_parquet(dict_reference, outfile):
+def main_parquet(dict_reference, outfile, categorical_threshold=None):
     """ Convert local file path to remote https file path in reference dictionary
     There are two remote paths:
     1. https://data.gdex.ucar.edu
@@ -78,7 +82,10 @@ def main_parquet(dict_reference, outfile):
     """
 
     # Define path patterns for replacement
-    match = '/glade/campaign/collections/gdex/data'
+    # Accept both /glade/campaign/collections/gdex/data and /gdex/data:
+    # normalize the long path to the short one, then replace the short one
+    match_long = '/glade/campaign/collections/gdex/data'
+    match = '/gdex/data'
     replacement = 'https://data.gdex.ucar.edu'
     # replacement_osdf = 'https://osdf-director.osg-htc.org/ncar/gdex'
     # replacement_osdf = 'osdf:\\/\\/\\/ncar\\/gdex'
@@ -92,8 +99,9 @@ def main_parquet(dict_reference, outfile):
     for chunk_name, chunk_value in dict_reference['refs'].items():
         if isinstance(chunk_value, list):
             # first element is path string
-            dict_reference_https['refs'][chunk_name][0] = chunk_value[0].replace(match, replacement)
-            dict_reference_osdf['refs'][chunk_name][0] = chunk_value[0].replace(match, replacement_osdf)
+            path = chunk_value[0].replace(match_long, match)
+            dict_reference_https['refs'][chunk_name][0] = path.replace(match, replacement)
+            dict_reference_osdf['refs'][chunk_name][0] = path.replace(match, replacement_osdf)
 
     # Generate output filenames
     if outfile.endswith('.parq'):
@@ -104,8 +112,12 @@ def main_parquet(dict_reference, outfile):
     out_filename_osdf = base_name + '-osdf.parq'
 
     # Write the modified dataframes to parquet files
-    df.refs_to_dataframe(dict_reference_https, out_filename_https)
-    df.refs_to_dataframe(dict_reference_osdf, out_filename_osdf)
+    if categorical_threshold is not None:
+        df.refs_to_dataframe(dict_reference_https, out_filename_https, categorical_threshold=categorical_threshold)
+        df.refs_to_dataframe(dict_reference_osdf, out_filename_osdf, categorical_threshold=categorical_threshold)
+    else:
+        df.refs_to_dataframe(dict_reference_https, out_filename_https)
+        df.refs_to_dataframe(dict_reference_osdf, out_filename_osdf)
 
     print(f'Created: {out_filename_https}')
     print(f'Created: {out_filename_osdf}')
