@@ -36,7 +36,10 @@ def main(filename, outfile):
         for l in fh:
             # Find local file path pattern and replace with remote https path
             # Note: change to new GDEX path
-            match = '\\/glade\\/campaign\\/collections\\/gdex\\/data'
+            # Accept both /glade/campaign/collections/gdex/data and /gdex/data:
+            # normalize the long path to the short one, then replace the short one
+            match_long = '\\/glade\\/campaign\\/collections\\/gdex\\/data'
+            match = '\\/gdex\\/data'
             replacement = 'https:\\/\\/data.gdex.ucar.edu'
             # replacement_osdf = 'https:\\/\\/osdf-director.osg-htc.org\\/ncar\\/gdex'
             replacement_osdf = 'osdf:\\/\\/\\/ncar\\/gdex'
@@ -46,6 +49,7 @@ def main(filename, outfile):
             # replacement_osdf = 'https:\\/\\/osdf-director.osg-htc.org\\/ncar\\/rda'
 
             # replace local reference to remote reference  
+            l = l.replace(match_long, match)
             str_output =  l.replace(match, replacement)
             str_output_osdf =  l.replace(match, replacement_osdf)
 
@@ -78,7 +82,10 @@ def main_parquet(dict_reference, outfile, categorical_threshold=None):
     """
 
     # Define path patterns for replacement
-    match = '/glade/campaign/collections/gdex/data'
+    # Accept both /glade/campaign/collections/gdex/data and /gdex/data:
+    # normalize the long path to the short one, then replace the short one
+    match_long = '/glade/campaign/collections/gdex/data'
+    match = '/gdex/data'
     replacement = 'https://data.gdex.ucar.edu'
     # replacement_osdf = 'https://osdf-director.osg-htc.org/ncar/gdex'
     # replacement_osdf = 'osdf:\\/\\/\\/ncar\\/gdex'
@@ -92,8 +99,9 @@ def main_parquet(dict_reference, outfile, categorical_threshold=None):
     for chunk_name, chunk_value in dict_reference['refs'].items():
         if isinstance(chunk_value, list):
             # first element is path string
-            dict_reference_https['refs'][chunk_name][0] = chunk_value[0].replace(match, replacement)
-            dict_reference_osdf['refs'][chunk_name][0] = chunk_value[0].replace(match, replacement_osdf)
+            path = chunk_value[0].replace(match_long, match)
+            dict_reference_https['refs'][chunk_name][0] = path.replace(match, replacement)
+            dict_reference_osdf['refs'][chunk_name][0] = path.replace(match, replacement_osdf)
 
     # Generate output filenames
     if outfile.endswith('.parq'):
