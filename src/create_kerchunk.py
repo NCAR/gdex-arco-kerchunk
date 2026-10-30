@@ -546,6 +546,9 @@ def separate_vars(refs, var_names, coord_vars={}):
     keep_values = set([
         '.zgroup',
         '.zattrs',
+        'time_bnds',  # Every reference file should contain bounds variables ideally
+        'lat_bnds',
+        'lon_bnds',
         'Time',
         'XLAT',
         'XLONG',
@@ -555,22 +558,27 @@ def separate_vars(refs, var_names, coord_vars={}):
         'XLONG_V',
         'XTIME',
     ])
-    keep_values.update(coord_vars)
-    # update keep variables with user specified variables in var_names
-    keep_values.update(var_names)
 
-    # process each reference file object
-    # only keep variables in keep_values
+    # process each reference file object; only keep variables in keep_values
     updated_refs = []
     for ref in refs:
+        # group paths, e.g. "Grid" from "Grid/.zgroup", so group metadata is kept
+        groups = {k.rsplit('/', 1)[0] for k in ref['refs'] if k.endswith('/.zgroup')}
+        full_keep_values = keep_values
+        if groups:
+            # Search for keep_values variables inside of groups
+            full_keep_values = {f"{group}/{value}" for group in groups for value in keep_values}
+        # update keep variables with user specified variables and coordinate variables
+        full_keep_values.update(var_names)
+        full_keep_values.update(coord_vars)
+
         new_json = {}
-        for i in ref['refs']:
-            varname = i.split('/')[0]
-            if varname in keep_values:
-                new_json[i] = ref['refs'][i]
-        # Append a copy of ref, so it remains untouched for potential future 
-        # variable splits, and replace the "refs" field with the new content.
-        updated_refs.append({**ref, 'refs': new_json}) 
+        for key, val in ref['refs'].items():
+            # full array path: "Grid/precipitation/0.0.0" -> "Grid/precipitation"
+            path = key.rsplit('/', 1)[0] if '/' in key else key
+            if path in full_keep_values or path in groups:
+                new_json[key] = val
+        updated_refs.append({**ref, 'refs': new_json})
     return updated_refs
 
 

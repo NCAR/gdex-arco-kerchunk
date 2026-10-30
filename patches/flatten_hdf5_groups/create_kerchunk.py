@@ -295,7 +295,8 @@ def get_cluster(
             )
             cluster.scale(jobs=num_processes)
         case 'single':
-            cluster = LocalCluster(n_workers=1, threads_per_worker=1, processes=False)
+            cluster = LocalCluster(n_workers=1, threads_per_worker=1,
+                                   processes=False, dashboard_address=None)
         case 'k8s':
             try :
                 # old version of dask_kubernetes
@@ -570,6 +571,9 @@ def separate_vars(refs, var_names, coord_vars={}):
     keep_values = set([
         '.zgroup',
         '.zattrs',
+        'time_bnds',  # Every reference file should contain bounds variables ideally
+        'lat_bnds',
+        'lon_bnds',
         'Time',
         'XLAT',
         'XLONG',
@@ -579,21 +583,25 @@ def separate_vars(refs, var_names, coord_vars={}):
         'XLONG_V',
         'XTIME',
     ])
-    keep_values.update(coord_vars)
-    # update keep variables with user specified variables in var_names
-    keep_values.update(var_names)
 
-    # process each reference file object
-    # only keep variables in keep_values
+    # process each reference file object; only keep variables in keep_values
     updated_refs = []
     for ref in refs:
         # group paths, e.g. "Grid" from "Grid/.zgroup", so group metadata is kept
         groups = {k.rsplit('/', 1)[0] for k in ref['refs'] if k.endswith('/.zgroup')}
+        full_keep_values = keep_values
+        if groups:
+            # Search for keep_values variables inside of groups
+            full_keep_values = {f"{group}/{value}" for group in groups for value in keep_values}
+        # update keep variables with user specified variables and coordinate variables
+        full_keep_values.update(var_names)
+        full_keep_values.update(coord_vars)
+
         new_json = {}
         for key, val in ref['refs'].items():
             # full array path: "Grid/precipitation/0.0.0" -> "Grid/precipitation"
             path = key.rsplit('/', 1)[0] if '/' in key else key
-            if path in keep_values or path in groups:
+            if path in full_keep_values or path in groups:
                 new_json[key] = val
         updated_refs.append({**ref, 'refs': new_json})
     return updated_refs
@@ -848,6 +856,7 @@ def process_kerchunk_combine(
                #coo_map='QSNOW',
               )
             print('create aggregated reference')
+            
             multi_kerchunk = mzz.translate()
             # Adjust metadata to eliminate HDF5 groups if they exist.
             groups = helpers.get_groups_from_refs(multi_kerchunk)
