@@ -302,7 +302,8 @@ def get_cluster(
             )
             cluster.scale(jobs=num_processes)
         case 'single':
-            cluster = LocalCluster(n_workers=1, threads_per_worker=1, processes=False)
+            cluster = LocalCluster(n_workers=1, threads_per_worker=1,
+                                   processes=False, dashboard_address=None)
         case 'k8s':
             try :
                 # old version of dask_kubernetes
@@ -571,12 +572,15 @@ def get_time_variable(filename, h5_coord_group=None):
     return result
 
 
-def separate_vars(refs, var_names):
+def separate_vars(refs, var_names, coord_vars={}):
     """Extracts specific variables from reference files object."""
-    # preset keep variables
+    # preset keep variables may not be recognized as coord vars but are still needed
     keep_values = set([
         '.zgroup',
         '.zattrs',
+        'time_bnds',  # Every reference file should contain bounds variables ideally
+        'lat_bnds',
+        'lon_bnds',
         'Time',
         'XLAT',
         'XLONG',
@@ -586,21 +590,29 @@ def separate_vars(refs, var_names):
         'XLONG_V',
         'XTIME',
     ])
-    # update keep variables with user specified variables in var_names
-    keep_values.update(var_names)
 
-    # process each reference file object
-    # only keep variables in keep_values
+    # process each reference file object; only keep variables in keep_values
     updated_refs = []
     for ref in refs:
+        # group paths, e.g. "Grid" from "Grid/.zgroup", so group metadata is kept
+        groups = {k.rsplit('/', 1)[0] for k in ref['refs'] if k.endswith('/.zgroup')}
+        full_keep_values = keep_values
+        if groups:
+            # Search for keep_values variables inside of groups
+            full_keep_values = {f"{group}/{value}" for group in groups for value in keep_values}
+        # update keep variables with user specified variables and coordinate variables
+        full_keep_values.update(var_names)
+        full_keep_values.update(coord_vars)
+
         new_json = {}
-        for i in ref['refs']:
-            varname = i.split('/')[0]
-            if varname in keep_values:
-                new_json[i] = ref['refs'][i]
-        ref['refs'] = new_json
-        updated_refs.append(ref)
+        for key, val in ref['refs'].items():
+            # full array path: "Grid/precipitation/0.0.0" -> "Grid/precipitation"
+            path = key.rsplit('/', 1)[0] if '/' in key else key
+            if path in full_keep_values or path in groups:
+                new_json[key] = val
+        updated_refs.append({**ref, 'refs': new_json})
     return updated_refs
+
 
 def exclude_vars(refs, exclude_var_names):
     """Excludes specific variables from reference files object."""
@@ -620,19 +632,32 @@ def exclude_vars(refs, exclude_var_names):
         updated_refs.append(ref)
     return updated_refs
 
-# def separate_combine_write_all_vars(refs, var_names, make_remote=False):
-#     """Extracts specific variables from refs.
-#     """
-#     updated_refs = separate_vars(refs, var_names)
 
-#     print('combining')
-#     mzz = MultiZarrToZarr(
-#            updated_refs,
-#            concat_dims=["time"],
-#            #coo_map='QSNOW',
-#         )
-#     multi_kerchunk = mzz.translate()
-#     write_kerchunk(output_directory, multi_kerchunk, regex, variables, output_filename, make_remote)
+def separate_all_vars(refs_list):
+    """Split a kerchunk reference list into one reference list per data variable.
+       Returns a dictionary with entries {"data_varname": refs}
+    """
+    # Assume the first reference contains the same coordinate/data var information as the rest.
+    refs = refs_list[0].get("refs", refs_list[0])
+    arrays = {k.rsplit("/", 1)[0] for k in refs if k.endswith("/.zarray")}
+
+    def base(path):
+        return path.rsplit("/", 1)[-1]
+
+    def attrs(v):
+        a = refs.get(f"{v}/.zattrs", "{}")
+        return ujson.loads(a) if isinstance(a, (str, bytes)) else a
+
+    dims = {d for v in arrays for d in attrs(v).get("_ARRAY_DIMENSIONS", [])}
+    named = {c for v in arrays for c in attrs(v).get("coordinates", "").split()}
+    coord_vars = {v for v in arrays if base(v) in dims | named}
+    data_vars = arrays - coord_vars
+
+    separate_refs = {}
+    for data_var in data_vars:
+        updated_refs = separate_vars(refs_list, [data_var], coord_vars)
+        separate_refs[data_var] = updated_refs
+    return separate_refs
 
 
 def calculate_parquet_record_size(refs_dict, min_size=10_000):
@@ -836,10 +861,34 @@ def process_kerchunk_combine(
     print(f'Client process memory usage (GB): {memory_gb:.2f}')
     print('Total memory used for references (GB): ', sum([sys.getsizeof(r)/1e9 for r in all_refs]))
 
-    # if len(variables) == 1 and variables[0] == ALL_VARIABLES_KEYWORD:
-    #     separate_combine_write_all_vars(all_refs, variables, make_remote)
-    #     sys.exit(1)
-    if len(variables) > 0:
+    if len(variables) == 1 and variables[0] == ALL_VARIABLES_KEYWORD:
+        var_refs_dict = separate_all_vars(all_refs)
+        for data_varname, ref in var_refs_dict.items():
+            mzz = MultiZarrToZarr(
+               ref,
+               concat_dims=[time_varname],
+               identical_dims=[lat_dim, lon_dim],
+               #coo_map='QSNOW',
+              )
+            print('create aggregated reference')
+            
+            multi_kerchunk = mzz.translate()
+            # Adjust metadata to eliminate HDF5 groups if they exist.
+            groups = helpers.get_groups_from_refs(multi_kerchunk)
+            if groups:
+                multi_kerchunk = helpers.strip_all_group_prefixes(multi_kerchunk, groups)
+                data_varname = data_varname.rsplit('/', 1)[-1]
+            print('writing combined kerchunk reference')
+            var_output_filename = f"{data_varname}_{output_filename}"
+            write_combined_kerchunk(
+                output_directory,
+                multi_kerchunk,
+                regex,
+                var_output_filename,
+                output_format,
+                make_remote
+            )
+    elif len(variables) > 0:
         all_refs = separate_vars(all_refs, variables)
 
     if len(variables_exclude) > 0:
