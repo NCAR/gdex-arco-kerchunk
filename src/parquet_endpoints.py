@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-parquet_endpoints_fastparquet.py - same tool as parquet_endpoints.py, but built
+parquet_endpoints.py - same tool as parquet_endpoints.py, but built
 on fastparquet + pandas instead of pyarrow.
 
 Inspect or rewrite the endpoint prefixes in a kerchunk parquet reference store
